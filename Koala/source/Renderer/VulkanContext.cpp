@@ -73,6 +73,7 @@ void VulkanContext::begin_frame() {
 }
 
 void VulkanContext::end_frame() {
+	submit_memory_buffer();
 	submit_render_buffer();
 
 	m_swapchain.present(m_render_finished_semaphores[m_current_frame], m_image_index);
@@ -292,30 +293,9 @@ void VulkanContext::begin_new_render_buffer() {
 }
 
 void VulkanContext::submit_memory_buffer() {
-
-}
-
-void VulkanContext::submit_render_buffer() {
-	vkEndCommandBuffer(m_render_buffers[m_image_index]);
-	 
-	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT	};
-
-	VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame]	};
-
-	VkSubmitInfo render_submit_info{
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = wait_semaphores,
-		.pWaitDstStageMask = wait_stages,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &m_render_buffers[m_image_index],
-		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &m_render_finished_semaphores[m_current_frame]
-	};
-
 	if (m_execute_memory_commands) {
 		m_execute_memory_commands = false;
-	
+
 		vkEndCommandBuffer(m_memory_buffer);
 
 		// Waiting for previous frame to finish rendering in case data it depends on changes suddenly
@@ -339,6 +319,25 @@ void VulkanContext::submit_render_buffer() {
 
 		vkWaitForFences(m_device->device(), 1, &m_mem_command_fence, VK_TRUE, UINT64_MAX);
 	}
+}
+
+void VulkanContext::submit_render_buffer() {
+	vkEndCommandBuffer(m_render_buffers[m_image_index]);
+	 
+	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT	};
+
+	VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame]	};
+
+	VkSubmitInfo render_submit_info{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = wait_semaphores,
+		.pWaitDstStageMask = wait_stages,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &m_render_buffers[m_image_index],
+		.signalSemaphoreCount = 1,
+		.pSignalSemaphores = &m_render_finished_semaphores[m_current_frame]
+	};
 
 	vkResetFences(m_device->device(), 1, &m_in_flight_fences[m_current_frame]);
 
