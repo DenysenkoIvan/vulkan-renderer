@@ -1,7 +1,10 @@
 #include "Renderer.h"
+#include "VulkanBuffer.h"
 
 void Renderer::create(std::shared_ptr<VulkanContext> context) {
 	m_context = context;
+
+	VulkanBuffer::set_context(context);
 
 	create_render_pass();
 	create_framebuffers();
@@ -34,7 +37,7 @@ void Renderer::clear_screen(VkClearValue clear_value) {
 		.pClearValues = &clear_value
 	};
 
-	m_context->submit([&](VkCommandBuffer cb) {
+	m_context->submit_render_commands([&](VkCommandBuffer cb) {
 		vkCmdBeginRenderPass(cb, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdEndRenderPass(cb);
 	});

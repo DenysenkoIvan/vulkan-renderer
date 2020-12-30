@@ -1,6 +1,6 @@
 #include "VulkanContext.h"
 
-#include <Koala/Core/Window.h>
+#include <Core/Window.h>
 
 #include <algorithm>
 #include <array>
@@ -30,6 +30,8 @@ void VulkanContext::create(GLFWwindow* window) {
 	pick_physical_device();
 
 	create_device();
+
+	create_allocator();
 
 	create_swapchain();
 
@@ -66,15 +68,12 @@ void VulkanContext::on_resize(uint32_t width, uint32_t height) {
 }
 
 void VulkanContext::begin_frame() {
+	begin_memory_buffer();
 	begin_new_render_buffer();
 }
 
-void VulkanContext::submit(const std::function<void(VkCommandBuffer)>& submit_fun) {
-	submit_fun(m_render_buffers[m_image_index]);
-}
-
 void VulkanContext::end_frame() {
-	submit_command_buffer();
+	submit_render_buffer();
 
 	m_swapchain.present(m_render_finished_semaphores[m_current_frame], m_image_index);
 
@@ -89,6 +88,10 @@ void VulkanContext::end_frame() {
 	m_images_in_flight[m_image_index] = m_in_flight_fences[m_current_frame];
 
 	begin_new_render_buffer();
+}
+
+void VulkanContext::submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun) {
+	submit_fun(m_render_buffers[m_image_index]);
 }
 
 void VulkanContext::create_instance() {
@@ -182,6 +185,14 @@ void VulkanContext::create_device() {
 	m_device->create(*m_physical_device, get_required_extensions());
 }
 
+void VulkanContext::create_allocator() {
+	m_allocator.create(m_physical_device, m_device);
+	m_allocator.set_submit_memory_commands_callback([&](const std::function<void(VkCommandBuffer)>& memory_commands) {
+		memory_commands(m_memory_buffer);
+		m_execute_memory_commands = true;
+	});
+}
+
 void VulkanContext::create_swapchain() {
 	m_swapchain.create(m_physical_device, m_surface, m_device);
 
@@ -209,14 +220,22 @@ void VulkanContext::create_command_pool() {
 void VulkanContext::allocate_command_buffers() {
 	m_render_buffers.resize(m_swapchain.image_count());
 
-	VkCommandBufferAllocateInfo buffer_infos{
+	VkCommandBufferAllocateInfo render_buffer_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 		.commandPool = m_command_pool,
 		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 		.commandBufferCount = (uint32_t)m_render_buffers.size()
 	};
 
-	vkAllocateCommandBuffers(m_device->device(), &buffer_infos, m_render_buffers.data());
+	VkCommandBufferAllocateInfo memory_buffer_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = m_command_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1
+	};
+
+	vkAllocateCommandBuffers(m_device->device(), &render_buffer_info, m_render_buffers.data());
+	vkAllocateCommandBuffers(m_device->device(), &memory_buffer_info, &m_memory_buffer);
 }
 
 void VulkanContext::create_sync_objects() {
@@ -234,12 +253,31 @@ void VulkanContext::create_sync_objects() {
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT
 	};
 
+	VkFenceCreateInfo mem_fence_info{
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
+	};
+
+	if (//vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_mem_commands_finished_semaphore) != VK_SUCCESS ||
+		vkCreateFence(m_device->device(), &mem_fence_info, nullptr, &m_mem_command_fence) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create memory commands semaphore");
+
 	for (uint32_t i = 0; i < m_frames_in_flight; i++) {
 		if (vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_image_available_semaphores[i]) != VK_SUCCESS ||
 			vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_render_finished_semaphores[i]) != VK_SUCCESS ||
 			vkCreateFence(m_device->device(), &fence_info, nullptr, &m_in_flight_fences[i]) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create sync objects");
 	}
+}
+
+void VulkanContext::begin_memory_buffer() {
+	vkResetCommandBuffer(m_memory_buffer, 0);
+
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+	};
+
+	if (vkBeginCommandBuffer(m_memory_buffer, &begin_info) != VK_SUCCESS)
+		throw std::runtime_error("Failed to begin memory buffer");
 }
 
 void VulkanContext::begin_new_render_buffer() {
@@ -253,15 +291,21 @@ void VulkanContext::begin_new_render_buffer() {
 		throw std::runtime_error("Failed to begin command buffer");
 }
 
-void VulkanContext::submit_command_buffer() {
+void VulkanContext::submit_memory_buffer() {
+
+}
+
+void VulkanContext::submit_render_buffer() {
 	vkEndCommandBuffer(m_render_buffers[m_image_index]);
+	 
+	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT	};
 
-	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+	VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame]	};
 
-	VkSubmitInfo submit_info{
+	VkSubmitInfo render_submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &m_image_available_semaphores[m_current_frame],
+		.pWaitSemaphores = wait_semaphores,
 		.pWaitDstStageMask = wait_stages,
 		.commandBufferCount = 1,
 		.pCommandBuffers = &m_render_buffers[m_image_index],
@@ -269,9 +313,39 @@ void VulkanContext::submit_command_buffer() {
 		.pSignalSemaphores = &m_render_finished_semaphores[m_current_frame]
 	};
 
+	if (m_execute_memory_commands) {
+		m_execute_memory_commands = false;
+	
+		vkEndCommandBuffer(m_memory_buffer);
+
+		// Waiting for previous frame to finish rendering in case data it depends on changes suddenly
+		// Potential bug if more than 2 frames can be in flight at the moment
+		// Should wait on all previous frames in that case
+		uint32_t prev_frame = m_current_frame == 0 ? m_frames_in_flight - 1 : m_current_frame - 1;
+		vkWaitForFences(m_device->device(), 1, &m_in_flight_fences[prev_frame], VK_TRUE, UINT64_MAX);
+
+		VkSubmitInfo memory_submit_info{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &m_memory_buffer,
+		};
+
+		vkResetFences(m_device->device(), 1, &m_mem_command_fence);
+
+		// TODO: Delete this line
+		std::cout << "Submitting memory commands\n";
+
+		vkQueueSubmit(m_device->graphics_queue(), 1, &memory_submit_info, m_mem_command_fence);
+
+		vkWaitForFences(m_device->device(), 1, &m_mem_command_fence, VK_TRUE, UINT64_MAX);
+	}
+
 	vkResetFences(m_device->device(), 1, &m_in_flight_fences[m_current_frame]);
 
-	vkQueueSubmit(m_device->graphics_queue(), 1, &submit_info, m_in_flight_fences[m_current_frame]);
+	// TODO: Delete this line
+	std::cout << "Submitting render commands\n";
+
+	vkQueueSubmit(m_device->graphics_queue(), 1, &render_submit_info, m_in_flight_fences[m_current_frame]);
 }
 
 void VulkanContext::begin_rendering() {
@@ -322,6 +396,7 @@ void VulkanContext::destroy_sync_objects() {
 		vkDestroySemaphore(m_device->device(), m_render_finished_semaphores[i], nullptr);
 		vkDestroyFence(m_device->device(), m_in_flight_fences[i], nullptr);
 	}
+	vkDestroyFence(m_device->device(), m_mem_command_fence, nullptr);
 
 	m_image_available_semaphores.clear();
 	m_render_finished_semaphores.clear();
@@ -341,7 +416,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debug_callback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 	VkDebugUtilsMessageTypeFlagsEXT messageType,
 	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-	void* pUserData) {
+	void* pUserData)
+{
 	// TODO: Error logging
 	std::cout << pCallbackData->pMessage << '\n';
 

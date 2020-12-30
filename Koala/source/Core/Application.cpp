@@ -1,6 +1,7 @@
 #include "Application.h"
 
 #include <Renderer/VulkanContext.h>
+#include <Renderer/Buffer.h>
 
 Application::Application(const ApplicationProperties& props) {
 	WindowProperties window_props;
@@ -58,7 +59,7 @@ void Application::on_update() {
 
 	float time_diff = (float)(time_point - m_prev_time_point);
 
-	std::cout << m_clear_value.color.float32[0] << '\n';
+	//std::cout << m_clear_value.color.float32[0] << '\n';
 
 	m_clear_value.color.float32[0] += (delta * time_diff);
 	m_clear_value.color.float32[2] += (delta * time_diff);
@@ -66,12 +67,33 @@ void Application::on_update() {
 	if (m_clear_value.color.float32[0] >= 1.0f) {
 		m_clear_value.color.float32[0] = 1.0f;
 		m_clear_value.color.float32[2] = 1.0f;
+		delta = 0.5f;
+	} else if (m_clear_value.color.float32[0] <= 0) {
+		m_clear_value.color.float32[0] = 0.0f;
+		m_clear_value.color.float32[2] = 0.0f;
+		delta = -0.5f;
 	}
 
 	if (m_clear_value.color.float32[0] >= 1.0f || m_clear_value.color.float32[0] <= 0.0f)
 		delta = -delta;
 
 	m_prev_time_point = time_point;
+
+	// TODO: Delete these lines
+	if (m_clear_value.color.float32[0] <= 0.05f) {
+		BufferLayout layout = {
+			{ Shader::DataType::Float3, "in_position" },
+			{ Shader::DataType::Float3, "in_color" }
+		};
+
+		float vertices[] = {
+			-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
+			 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
+			 0.0f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f
+		};
+
+		VertexBuffer *vertex_buffer = new VertexBuffer(vertices, sizeof(vertices), layout);
+	}
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();

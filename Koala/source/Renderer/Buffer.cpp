@@ -3,55 +3,58 @@
 
 #include <stdexcept>
 
-std::shared_ptr<VertexBuffer> VertexBuffer::create() {
-	VertexBuffer* vb = new VertexBuffer();
+static constexpr uint32_t shader_data_type_size(Shader::DataType type) {
+	switch (type) {
+		case Shader::DataType::Float:  return 4;
+		case Shader::DataType::Float2: return 4 * 2;
+		case Shader::DataType::Float3: return 4 * 3;
+		case Shader::DataType::Float4: return 4 * 4;
+		case Shader::DataType::Int:    return 4;
+		case Shader::DataType::Int2:   return 4 * 2;
+		case Shader::DataType::Int3:   return 4 * 3;
+		case Shader::DataType::Int4:   return 4 * 4;
+		case Shader::DataType::Mat3:   return 4 * 3 * 3;
+		case Shader::DataType::Mat4:   return 4 * 4 * 4;
+	}
 
-	return std::shared_ptr<VertexBuffer>(vb);
+	throw std::runtime_error("Unknown Shader::DataType");
 }
 
-VertexBuffer::~VertexBuffer() {
-	destroy();
+BufferElement::BufferElement(Shader::DataType t, std::string n)
+	: name(std::move(n)), type(t)
+{
+	size = shader_data_type_size(type);
 }
 
-VertexBuffer::VertexBuffer() {
+BufferLayout::BufferLayout(std::initializer_list<BufferElement> elements)
+	: m_elements(elements)
+{
+	calculate_offsets_and_stride();
 }
 
+void BufferLayout::calculate_offsets_and_stride() {
+	uint32_t offset = 0;
+	for (auto& element : m_elements) {
+		element.offset = offset;
 
-void VertexBuffer::update(const float* vertices, uint32_t count) {
-	if (m_buffer != VK_NULL_HANDLE)
-		destroy();
+		offset += element.size;
+	}
 
-	//m_buffer = VulkanContext::create_buffer(count * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_SHARING_MODE_EXCLUSIVE);
+	m_stride = offset;
 }
 
-void VertexBuffer::destroy() {
-	//VulkanContext::destroy_buffer(m_buffer);
+VertexBuffer::VertexBuffer(const void* data, uint64_t size, BufferLayout layout)
+	: m_layout(std::move(layout)), m_vk_buffer(data, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) {}
+
+void VertexBuffer::update_state(BufferState state) {
+	m_state = state;
+	
+	if (state == BufferState::Ready)
+		m_vk_buffer.release_staging_buffer();
 }
 
+std::shared_ptr<VertexBuffer> VertexBuffer::create(const void* data, uint64_t size, BufferLayout layout) {
+	std::shared_ptr<VertexBuffer> buffer = std::make_shared<VertexBuffer>(data, size, std::move(layout));
 
-
-
-std::shared_ptr<IndexBuffer> IndexBuffer::create() {
-	IndexBuffer* ib = new IndexBuffer();
-
-	return std::shared_ptr<IndexBuffer>(ib);
-}
-
-IndexBuffer::~IndexBuffer() {
-	destroy();
-}
-
-IndexBuffer::IndexBuffer() {
-
-}
-
-
-void IndexBuffer::update(const void* data, uint32_t count, IndexType type) {
-	if (m_buffer != VK_NULL_HANDLE)
-		destroy();
-
-}
-
-void IndexBuffer::destroy() {
-
+	return buffer;
 }

@@ -38,10 +38,8 @@ void Window::on_update() {
 void Window::init_window(const WindowProperties& window_props) {
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	m_window = glfwCreateWindow(window_props.width, window_props.height, window_props.title.data(), nullptr, nullptr);
-	if (!m_window) {
-		// TODO: Log Error
+	if (!m_window)
 		throw std::runtime_error("Failed to create a window");
-	}
 
 	m_callback = window_props.callback;
 
