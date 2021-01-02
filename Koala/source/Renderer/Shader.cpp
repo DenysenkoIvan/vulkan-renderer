@@ -1,10 +1,11 @@
-/*#include "Shader.h"
+#include "Shader.h"
 #include "VulkanContext.h"
 
 #include <spirv_reflect.h>
 
 #include <fstream>
 
+std::shared_ptr<VulkanContext> Shader::s_context;
 std::vector<std::shared_ptr<Shader>> Shader::s_shader_library;
 
 std::shared_ptr<Shader> Shader::create(const std::filesystem::path& vert_spv_path, const std::filesystem::path& frag_spv_path) {
@@ -21,14 +22,31 @@ std::shared_ptr<Shader> Shader::create(const std::filesystem::path& vert_spv_pat
 	return new_shader;
 }
 
+void Shader::set_context(std::shared_ptr<VulkanContext> context) {
+	s_context = context;
+}
+
 Shader::Shader(const std::filesystem::path& vert_spv_path, const std::filesystem::path& frag_spv_path) :
 	m_vert_shader_path(vert_spv_path), m_frag_shader_path(frag_spv_path)
 {
 	std::vector<uint8_t> vert_spv_code = load_spirv_code(vert_spv_path);
 	std::vector<uint8_t> frag_spv_code = load_spirv_code(frag_spv_path);
 
-	m_vertex_module = VulkanContext::create_shader_module(vert_spv_code);
-	m_fragment_module = VulkanContext::create_shader_module(frag_spv_code);
+	VkShaderModuleCreateInfo vert_module_info{
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = (uint32_t)vert_spv_code.size(),
+		.pCode = (uint32_t*)vert_spv_code.data()
+	};
+	
+	VkShaderModuleCreateInfo frag_module_info{
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = (uint32_t)frag_spv_code.size(),
+		.pCode = (uint32_t*)frag_spv_code.data()
+	};
+
+	if (vkCreateShaderModule(s_context->device().device(), &vert_module_info, nullptr, &m_vertex_module) != VK_SUCCESS ||
+		vkCreateShaderModule(s_context->device().device(), &frag_module_info, nullptr, &m_fragment_module) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create shader module");
 
 	reflect_shader(vert_spv_code);
 	reflect_shader(frag_spv_code);
@@ -37,16 +55,26 @@ Shader::Shader(const std::filesystem::path& vert_spv_path, const std::filesystem
 
 	m_vertex_create_info = create_pipeline_shader_stage_create_info(m_vertex_module, VK_SHADER_STAGE_VERTEX_BIT);
 	m_fragment_create_info = create_pipeline_shader_stage_create_info(m_fragment_module, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+	create_pipeline_layout();
 }
 
 Shader::~Shader() {
-	for (auto& set : m_descriptor_sets_info)
-		VulkanContext::destroy_descriptor_set_layout(set.layout);
+	for (DescriptorSetInfo& set : m_descriptor_sets_info)
+		vkDestroyDescriptorSetLayout(s_context->device().device(), set.layout, nullptr);
 
-	VulkanContext::destroy_pipeline_layout(m_pipeline_layout);
+	vkDestroyPipelineLayout(s_context->device().device(), m_pipeline_layout, nullptr);
+	vkDestroyShaderModule(s_context->device().device(), m_vertex_module, nullptr);
+	vkDestroyShaderModule(s_context->device().device(), m_fragment_module, nullptr);
+}
 
-	VulkanContext::destroy_shader_module(m_vertex_module);
-	VulkanContext::destroy_shader_module(m_fragment_module);
+std::array<VkPipelineShaderStageCreateInfo, 2> Shader::pipeline_shader_stage_infos() const {
+	std::array<VkPipelineShaderStageCreateInfo, 2> stages = {
+		m_vertex_create_info,
+		m_fragment_create_info
+	};
+
+	return stages;
 }
 
 std::vector<uint8_t> Shader::load_spirv_code(const std::filesystem::path& spv_path) {
@@ -161,7 +189,13 @@ void Shader::create_descriptor_set_layouts() {
 			bindings.push_back(binding_layout);
 		}
 
-		set_info.layout = VulkanContext::create_descriptor_set_layout(bindings);
+		VkDescriptorSetLayoutCreateInfo set_layout_info{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.bindingCount = (uint32_t)bindings.size(),
+			.pBindings = bindings.data()
+		};
+
+		vkCreateDescriptorSetLayout(s_context->device().device(), &set_layout_info, nullptr, &set_info.layout);
 	}
 }
 
@@ -172,7 +206,14 @@ void Shader::create_pipeline_layout() {
 	for (const auto& set : m_descriptor_sets_info)
 		layouts.push_back(set.layout);
 
-	m_pipeline_layout = VulkanContext::create_pipeline_layout(layouts, {});
+	VkPipelineLayoutCreateInfo layout_info{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = (uint32_t)layouts.size(),
+		.pSetLayouts = layouts.data()
+	};
+	
+	if (vkCreatePipelineLayout(s_context->device().device(), &layout_info, nullptr, &m_pipeline_layout) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create pipeline layout");
 }
 
 VkPipelineShaderStageCreateInfo Shader::create_pipeline_shader_stage_create_info(VkShaderModule shader_module, VkShaderStageFlags stage) {
@@ -184,4 +225,4 @@ VkPipelineShaderStageCreateInfo Shader::create_pipeline_shader_stage_create_info
 	};
 
 	return stage_info;
-}*/
+}

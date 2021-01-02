@@ -48,5 +48,8 @@ private:
 	double m_prev_time_point = 0.0;
 
 	Renderer m_renderer;
+	std::shared_ptr<VertexBuffer> m_vertex_buffer;
+	std::shared_ptr<IndexBuffer> m_index_buffer1;
+	std::shared_ptr<IndexBuffer> m_index_buffer2;
 	VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };

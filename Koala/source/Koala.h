@@ -8,5 +8,5 @@
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
 
-#include <Renderer/Pipeline.h>
+#include <Renderer/Buffer.h>
 #include <Renderer/Shader.h>

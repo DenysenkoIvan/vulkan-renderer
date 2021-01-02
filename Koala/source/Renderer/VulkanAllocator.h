@@ -21,13 +21,13 @@ public:
 
 	void set_submit_memory_commands_callback(const std::function<void(const std::function<void(VkCommandBuffer)>&)>& callback);
 
-	BufferAllocationInfo allocate_buffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
+	BufferAllocationInfo allocate_buffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage) const;
 
 private:
-	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
-	VkBuffer create_buffer(VkDeviceSize size, VkBufferUsageFlags usage);
-	VkDeviceMemory allocate_memory(VkBuffer buffer, VkDeviceSize size, VkMemoryPropertyFlags properties);
+	VkBuffer create_buffer(VkDeviceSize size, VkBufferUsageFlags usage) const;
+	VkDeviceMemory allocate_memory(VkBuffer buffer, VkDeviceSize new_size, VkMemoryPropertyFlags properties) const;
 
 private:
 	std::function<void(const std::function<void(VkCommandBuffer)>&)> m_submit_memory_commands_fun;

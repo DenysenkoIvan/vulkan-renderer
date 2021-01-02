@@ -22,9 +22,14 @@ VulkanBuffer::VulkanBuffer(const void* data, uint64_t size, VkBufferUsageFlags u
 }
 
 VulkanBuffer::~VulkanBuffer() {
+	clear();
+}
+
+void VulkanBuffer::clear() {
 	if (m_staging_buffer)
 		release_staging_buffer();
 
+	m_buffer_size = 0;
 	vkDestroyBuffer(s_context->device().device(), m_buffer, nullptr);
 	vkFreeMemory(s_context->device().device(), m_buffer_memory, nullptr);
 }

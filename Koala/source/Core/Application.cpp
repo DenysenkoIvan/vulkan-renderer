@@ -13,6 +13,30 @@ Application::Application(const ApplicationProperties& props) {
 	m_window.initialize(window_props);
 
 	m_renderer.create(m_window.context());
+
+	BufferLayout layout = {
+			{ Shader::DataType::Float3, "in_position" },
+			{ Shader::DataType::Float3, "in_color" }
+	};
+
+	float vertices[] = {
+		-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
+		 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
+		-0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f,
+		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
+	};
+
+	uint32_t indices1[] = {
+		0, 1, 2
+	};
+
+	uint32_t indices2[] = {
+		1, 2, 3
+	};
+
+	m_vertex_buffer = VertexBuffer::create(vertices, sizeof(vertices), layout);
+	m_index_buffer1 = IndexBuffer::create(indices1, sizeof(indices1), IndexBuffer::Type::UInt32);
+	m_index_buffer2 = IndexBuffer::create(indices2, sizeof(indices2), IndexBuffer::Type::UInt32);
 }
 
 Application::~Application() {
@@ -79,28 +103,16 @@ void Application::on_update() {
 
 	m_prev_time_point = time_point;
 
-	// TODO: Delete these lines
-	if (m_clear_value.color.float32[0] <= 0.05f) {
-		BufferLayout layout = {
-			{ Shader::DataType::Float3, "in_position" },
-			{ Shader::DataType::Float3, "in_color" }
-		};
-
-		float vertices[] = {
-			-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
-			 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
-			 0.0f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f
-		};
-
-		VertexBuffer *vertex_buffer = new VertexBuffer(vertices, sizeof(vertices), layout);
-	}
-
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
 }
 
 void Application::on_render() {
 	m_renderer.clear_screen(m_clear_value);
+	
+	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer1);
+	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer2);
+	
 	m_renderer.display();
 
 	for (const auto& layer : m_layer_stack)

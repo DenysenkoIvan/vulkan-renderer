@@ -9,12 +9,14 @@ public:
 	VulkanBuffer(const void* data, uint64_t size, VkBufferUsageFlags usage);
 	~VulkanBuffer();
 
+	VkBuffer buffer() const { return m_buffer; }
+	VkDeviceMemory memory() const { return m_buffer_memory; }
+
+	void clear();
 	void release_staging_buffer();
 
 	static void set_context(std::shared_ptr<VulkanContext> context);
 
-private:
-	
 private:
 	static std::shared_ptr<VulkanContext> s_context;
 

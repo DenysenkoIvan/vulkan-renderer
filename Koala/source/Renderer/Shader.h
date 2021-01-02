@@ -1,5 +1,15 @@
 #pragma once
 
+#include "Uniform.h"
+#include "VulkanContext.h"
+
+#include <vulkan\vulkan.h>
+#include <spirv_reflect.h>
+
+#include <array>
+#include <filesystem>
+#include <vector>
+
 class Shader {
 public:
 	enum class DataType {
@@ -16,25 +26,14 @@ public:
 		Mat4
 	};
 
-private:
-};
-
-/*#pragma once
-
-#include "Common.h"
-#include "Uniform.h"
-
-#include <vulkan\vulkan.h>
-#include <spirv_reflect.h>
-
-#include <filesystem>
-#include <vector>
-
-class Shader {
-public:
 	~Shader();
 
+	std::array<VkPipelineShaderStageCreateInfo, 2> pipeline_shader_stage_infos() const;
+	VkPipelineLayout pipeline_layout() const { return m_pipeline_layout; }
+
 	static std::shared_ptr<Shader> create(const std::filesystem::path& vertex_spv_file, const std::filesystem::path& fragment_spv_file);
+	
+	static void set_context(std::shared_ptr<VulkanContext> context);
 
 private:
 	Shader(const std::filesystem::path& vertex_spv_file, const std::filesystem::path& fragment_spv_file);
@@ -50,13 +49,14 @@ private:
 	VkPipelineShaderStageCreateInfo create_pipeline_shader_stage_create_info(VkShaderModule shader_module, VkShaderStageFlags stage);
 
 private:
+	static std::shared_ptr<VulkanContext> s_context;
 	static std::vector<std::shared_ptr<Shader>> s_shader_library;
 
-	struct InputVariable {
+	/*struct InputVariable {
 		std::string name;
 		Format format;
 		uint32_t location;
-	};
+	};*/
 
 	struct DescriptorSetInfo {
 		UniformSetInfo set_info;
@@ -73,11 +73,11 @@ private:
 
 	std::filesystem::path m_vert_shader_path;
 	std::filesystem::path m_frag_shader_path;
-	VkShaderModule m_vertex_module;
-	VkShaderModule m_fragment_module;
+	VkShaderModule m_vertex_module = VK_NULL_HANDLE;
+	VkShaderModule m_fragment_module = VK_NULL_HANDLE;
 	VkPipelineShaderStageCreateInfo m_vertex_create_info;
 	VkPipelineShaderStageCreateInfo m_fragment_create_info;
 	std::vector<DescriptorSetInfo> m_descriptor_sets_info;
 	//std::vector<InputVariable>
-	VkPipelineLayout m_pipeline_layout;
-};*/
+	VkPipelineLayout m_pipeline_layout = VK_NULL_HANDLE;
+};

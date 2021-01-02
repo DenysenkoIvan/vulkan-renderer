@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Common.h"
 #include "VulkanAllocator.h"
 #include "VulkanDevice.h"
 #include "VulkanPhysicalDevice.h"
@@ -18,9 +17,9 @@ public:
 	void create(GLFWwindow* window);
 	~VulkanContext();
 
-	VulkanAllocator& allocator() { return m_allocator; }
-	const VulkanPhysicalDevice& physical_device() { return *m_physical_device; }
-	const VulkanDevice& device() { return *m_device; }
+	const VulkanAllocator& allocator() const { return m_allocator; }
+	const VulkanPhysicalDevice& physical_device() const { return *m_physical_device; }
+	const VulkanDevice& device() const { return *m_device; }
 	VulkanSwapchain& swapchain() { return m_swapchain; }
 
 	void begin_frame();
@@ -45,8 +44,11 @@ private:
 	void create_sync_objects();
 	void begin_memory_buffer();
 	void begin_new_render_buffer();
-	void submit_memory_buffer();
-	void submit_render_buffer();
+	void execute_memory_commands();
+	void execute_render_commands();
+
+	VkCommandBuffer begin_single_time_submit_buffer();
+	VkCommandBuffer transition_swapchain_image_to_present_layout();
 
 	void begin_rendering();
 	void end_rendering();
@@ -88,6 +90,7 @@ private:
 	VkFence m_mem_command_fence;
 	std::vector<VkSemaphore> m_image_available_semaphores;
 	std::vector<VkSemaphore> m_render_finished_semaphores;
+	std::vector<VkSemaphore> m_presentation_ready_semaphores;
 	std::vector<VkFence> m_in_flight_fences;
 	std::vector<VkFence> m_images_in_flight;
 };

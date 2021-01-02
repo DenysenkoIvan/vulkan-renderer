@@ -46,15 +46,29 @@ void BufferLayout::calculate_offsets_and_stride() {
 VertexBuffer::VertexBuffer(const void* data, uint64_t size, BufferLayout layout)
 	: m_layout(std::move(layout)), m_vk_buffer(data, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) {}
 
-void VertexBuffer::update_state(BufferState state) {
-	m_state = state;
-	
-	if (state == BufferState::Ready)
-		m_vk_buffer.release_staging_buffer();
+void VertexBuffer::update(const void* data, uint64_t size) {
+	m_vk_buffer.clear();
+
+	m_vk_buffer = VulkanBuffer(data, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 }
 
 std::shared_ptr<VertexBuffer> VertexBuffer::create(const void* data, uint64_t size, BufferLayout layout) {
 	std::shared_ptr<VertexBuffer> buffer = std::make_shared<VertexBuffer>(data, size, std::move(layout));
 
 	return buffer;
+}
+
+IndexBuffer::IndexBuffer(const void* data, uint64_t size, Type type)
+	: m_type(type), m_vk_buffer(data, size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT) 
+{
+	if (type == Type::UInt16)
+		m_index_count = (uint32_t)size / 2;
+	else if (type == Type::UInt32)
+		m_index_count = (uint32_t)size / 4;
+}
+
+std::shared_ptr<IndexBuffer> IndexBuffer::create(const void* data, uint64_t size, Type type) {
+	std::shared_ptr<IndexBuffer> index_buffer = std::make_shared<IndexBuffer>(data, size, type);
+
+	return index_buffer;
 }
