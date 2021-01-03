@@ -83,7 +83,16 @@ void Application::on_update() {
 
 	float time_diff = (float)(time_point - m_prev_time_point);
 
-	//std::cout << m_clear_value.color.float32[0] << '\n';
+	float value = m_clear_value.color.float32[0];
+
+	float vertices[] = {
+		-0.5f, -0.5f, 0.0f, value, 0.0f, value,
+		 0.5f, -0.5f, 0.0f, value, 0.0f, value,
+		-0.5f,  0.5f, 0.0f, value, 0.0f, value,
+		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
+	};
+
+	m_vertex_buffer->update(vertices, sizeof(vertices));
 
 	m_clear_value.color.float32[0] += (delta * time_diff);
 	m_clear_value.color.float32[2] += (delta * time_diff);
@@ -115,6 +124,6 @@ void Application::on_render() {
 	
 	m_renderer.display();
 
-	for (const auto& layer : m_layer_stack)
-		layer->on_render();
+	//for (const auto& layer : m_layer_stack)
+	//	layer->on_render();
 }

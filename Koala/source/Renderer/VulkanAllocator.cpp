@@ -20,6 +20,12 @@ void VulkanAllocator::free_staging_buffers() {
 	m_staging_buffers.resize(0);
 }
 
+void VulkanAllocator::update_buffer(VkBuffer buffer, const void* data, VkDeviceSize size) {
+	m_submit_memory_commands_fun([&](VkCommandBuffer cmd_buffer) {
+		vkCmdUpdateBuffer(cmd_buffer, buffer, 0, size, data);
+	});
+}
+
 BufferAllocationInfo VulkanAllocator::allocate_buffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage) {
 	VkBuffer staging_buffer = create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 	VkDeviceMemory staging_memory = allocate_buffer_memory(staging_buffer, size, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);

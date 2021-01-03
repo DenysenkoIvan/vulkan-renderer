@@ -260,7 +260,7 @@ void Renderer::create_clear_screen_framebuffers() {
 
 void Renderer::create_pipeline() {
 	std::shared_ptr<Shader> shader = Shader::create("../assets/shaders/vertex.spv", "../assets/shaders/fragment.spv");
-
+	
 	std::array<VkPipelineShaderStageCreateInfo, 2> shader_stages = shader->pipeline_shader_stage_infos();
 
 	VkVertexInputBindingDescription vertex_binding_description{

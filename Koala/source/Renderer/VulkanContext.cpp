@@ -75,25 +75,18 @@ void VulkanContext::begin_frame() {
 void VulkanContext::end_frame() {
 	execute_render_commands();
 
-	m_swapchain.present(m_presentation_ready_semaphores[m_current_frame], m_image_index);
+	m_swapchain.present(m_presentation_ready_semaphore, m_image_index);
+	
+	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphore);
 
-	m_current_frame = (m_current_frame + 1) % m_frames_in_flight;
-
-	vkWaitForFences(m_device->device(), 1, &m_in_flight_fences[m_current_frame], VK_TRUE, UINT64_MAX);
-
-	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphores[m_current_frame]);
-
-	if (m_images_in_flight[m_image_index] != VK_NULL_HANDLE)
-		vkWaitForFences(m_device->device(), 1, &m_images_in_flight[m_image_index], VK_TRUE, UINT64_MAX);
-	m_images_in_flight[m_image_index] = m_in_flight_fences[m_current_frame];
+	vkWaitForFences(m_device->device(), 1, &m_render_commands_fence, VK_TRUE, UINT64_MAX);
 
 	begin_new_render_buffer();
 }
 
 void VulkanContext::submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun) {
-	if (m_execute_memory_commands) {
-		m_execute_memory_commands = false;
-
+	if (m_should_execute_mem_commands) {
+		m_should_execute_mem_commands = false;
 		execute_memory_commands();
 	}
 
@@ -195,21 +188,14 @@ void VulkanContext::create_allocator() {
 	m_allocator.create(m_physical_device, m_device);
 	m_allocator.set_submit_memory_commands_callback([&](const std::function<void(VkCommandBuffer)>& memory_commands) {
 		memory_commands(m_memory_buffer);
-		m_execute_memory_commands = true;
-		});
+		m_should_execute_mem_commands = true;
+	});
 }
 
 void VulkanContext::create_swapchain() {
 	m_swapchain.create(m_physical_device, m_surface, m_device);
 
 	uint32_t image_count = (uint32_t)m_swapchain.images().size();
-
-	const uint32_t appropriate_frames_in_flight_count = 2;
-
-	if (image_count <= appropriate_frames_in_flight_count)
-		m_frames_in_flight = image_count;
-	else
-		m_frames_in_flight = appropriate_frames_in_flight_count;
 }
 
 void VulkanContext::create_command_pool() {
@@ -225,6 +211,7 @@ void VulkanContext::create_command_pool() {
 
 void VulkanContext::allocate_command_buffers() {
 	m_render_buffers.resize(m_swapchain.image_count());
+	m_transition_image_layout_buffers.resize(m_swapchain.image_count());
 
 	VkCommandBufferAllocateInfo render_buffer_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -241,16 +228,11 @@ void VulkanContext::allocate_command_buffers() {
 	};
 
 	vkAllocateCommandBuffers(m_device->device(), &render_buffer_info, m_render_buffers.data());
+	vkAllocateCommandBuffers(m_device->device(), &render_buffer_info, m_transition_image_layout_buffers.data());
 	vkAllocateCommandBuffers(m_device->device(), &memory_buffer_info, &m_memory_buffer);
 }
 
 void VulkanContext::create_sync_objects() {
-	m_image_available_semaphores.resize(m_frames_in_flight);
-	m_render_finished_semaphores.resize(m_frames_in_flight);
-	m_presentation_ready_semaphores.resize(m_frames_in_flight);
-	m_in_flight_fences.resize(m_frames_in_flight);
-	m_images_in_flight.resize(m_swapchain.image_count());
-
 	VkSemaphoreCreateInfo semaphore_info{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
 	};
@@ -264,24 +246,20 @@ void VulkanContext::create_sync_objects() {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
 	};
 
-	if (//vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_mem_commands_finished_semaphore) != VK_SUCCESS ||
-		vkCreateFence(m_device->device(), &mem_fence_info, nullptr, &m_mem_command_fence) != VK_SUCCESS)
+	if (vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_presentation_ready_semaphore) != VK_SUCCESS ||
+		vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_render_finished_semaphore) != VK_SUCCESS ||
+		vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_image_available_semaphore) != VK_SUCCESS ||
+		vkCreateFence(m_device->device(), &mem_fence_info, nullptr, &m_mem_commands_fence) != VK_SUCCESS ||
+		vkCreateFence(m_device->device(), &fence_info, nullptr, &m_render_commands_fence) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create memory commands semaphore");
-
-	for (uint32_t i = 0; i < m_frames_in_flight; i++) {
-		if (vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_image_available_semaphores[i]) != VK_SUCCESS ||
-			vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_render_finished_semaphores[i]) != VK_SUCCESS ||
-			vkCreateSemaphore(m_device->device(), &semaphore_info, nullptr, &m_presentation_ready_semaphores[i]) != VK_SUCCESS ||
-			vkCreateFence(m_device->device(), &fence_info, nullptr, &m_in_flight_fences[i]) != VK_SUCCESS)
-			throw std::runtime_error("Failed to create sync objects");
-	}
 }
 
 void VulkanContext::begin_memory_buffer() {
-	vkResetCommandBuffer(m_memory_buffer, 0);
-
+	vkResetCommandBuffer(m_memory_buffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+	
 	VkCommandBufferBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
 	if (vkBeginCommandBuffer(m_memory_buffer, &begin_info) != VK_SUCCESS)
@@ -289,10 +267,11 @@ void VulkanContext::begin_memory_buffer() {
 }
 
 void VulkanContext::begin_new_render_buffer() {
-	vkResetCommandBuffer(m_render_buffers[m_image_index], 0);
+	vkResetCommandBuffer(m_render_buffers[m_image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 
 	VkCommandBufferBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
 	if (vkBeginCommandBuffer(m_render_buffers[m_image_index], &begin_info) != VK_SUCCESS)
@@ -317,11 +296,7 @@ void VulkanContext::begin_new_render_buffer() {
 void VulkanContext::execute_memory_commands() {
 	vkEndCommandBuffer(m_memory_buffer);
 
-	// Waiting for previous frame to finish rendering in case data it depends on changes suddenly
-	// Potential bug if more than 2 frames can be in flight at the moment
-	// Should wait on all previous frames in that case
-	uint32_t prev_frame = m_current_frame == 0 ? m_frames_in_flight - 1 : m_current_frame - 1;
-	vkWaitForFences(m_device->device(), 1, &m_in_flight_fences[prev_frame], VK_TRUE, UINT64_MAX);
+	vkWaitForFences(m_device->device(), 1, &m_render_commands_fence, VK_TRUE, UINT64_MAX);
 
 	VkSubmitInfo memory_submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -329,21 +304,21 @@ void VulkanContext::execute_memory_commands() {
 		.pCommandBuffers = &m_memory_buffer,
 	};
 
-	vkResetFences(m_device->device(), 1, &m_mem_command_fence);
+	vkResetFences(m_device->device(), 1, &m_mem_commands_fence);
 
 	// TODO: Delete this line
 	//std::cout << "Submitting memory commands\n";
 
-	vkQueueSubmit(m_device->graphics_queue(), 1, &memory_submit_info, m_mem_command_fence);
+	vkQueueSubmit(m_device->graphics_queue(), 1, &memory_submit_info, m_mem_commands_fence);
 
-	vkWaitForFences(m_device->device(), 1, &m_mem_command_fence, VK_TRUE, UINT64_MAX);
+	vkWaitForFences(m_device->device(), 1, &m_mem_commands_fence, VK_TRUE, UINT64_MAX);
 
 	m_allocator.free_staging_buffers();
 }
 
 void VulkanContext::execute_render_commands() {
-	if (m_execute_memory_commands) {
-		m_execute_memory_commands = false;
+	if (m_should_execute_mem_commands) {
+		m_should_execute_mem_commands = false;
 		execute_memory_commands();
 	}
 
@@ -351,8 +326,8 @@ void VulkanContext::execute_render_commands() {
 
 	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
-	VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame] };
-
+	VkSemaphore wait_semaphores[] = { m_image_available_semaphore };
+	
 	VkSubmitInfo render_submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
@@ -361,7 +336,7 @@ void VulkanContext::execute_render_commands() {
 		.commandBufferCount = 1,
 		.pCommandBuffers = &m_render_buffers[m_image_index],
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &m_render_finished_semaphores[m_current_frame]
+		.pSignalSemaphores = &m_render_finished_semaphore
 	};
 
 	VkCommandBuffer transition_image_layout_buffer = transition_swapchain_image_to_present_layout();
@@ -369,15 +344,13 @@ void VulkanContext::execute_render_commands() {
 	VkSubmitInfo layout_transition_submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &m_render_finished_semaphores[m_current_frame],
+		.pWaitSemaphores = &m_render_finished_semaphore,
 		.pWaitDstStageMask = wait_stages,
 		.commandBufferCount = 1,
 		.pCommandBuffers = &transition_image_layout_buffer,
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &m_presentation_ready_semaphores[m_current_frame]
+		.pSignalSemaphores = &m_presentation_ready_semaphore
 	};
-
-	vkResetFences(m_device->device(), 1, &m_in_flight_fences[m_current_frame]);
 
 	// TODO: Delete this line
 	//std::cout << "Submitting render commands\n";
@@ -387,33 +360,12 @@ void VulkanContext::execute_render_commands() {
 		layout_transition_submit_info
 	};
 
-	vkQueueSubmit(m_device->graphics_queue(), (uint32_t)submit_infos.size(), submit_infos.data(), m_in_flight_fences[m_current_frame]);
-}
+	vkResetFences(m_device->device(), 1, &m_render_commands_fence);
 
-VkCommandBuffer VulkanContext::begin_single_time_submit_buffer() {
-	VkCommandBufferAllocateInfo buffer_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = m_command_pool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1
-	};
-
-	VkCommandBuffer transition_buffer;
-	vkAllocateCommandBuffers(m_device->device(), &buffer_info, &transition_buffer);
-
-	VkCommandBufferBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-	};
-
-	vkBeginCommandBuffer(transition_buffer, &begin_info);
-
-	return transition_buffer;
+	vkQueueSubmit(m_device->graphics_queue(), (uint32_t)submit_infos.size(), submit_infos.data(), m_render_commands_fence);
 }
 
 VkCommandBuffer VulkanContext::transition_swapchain_image_to_present_layout() {
-	VkCommandBuffer buffer = begin_single_time_submit_buffer();
-
 	VkImageMemoryBarrier barrier{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 		.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT ,
@@ -426,8 +378,17 @@ VkCommandBuffer VulkanContext::transition_swapchain_image_to_present_layout() {
 		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
 	};
 
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+	};
+
+	vkResetCommandBuffer(m_transition_image_layout_buffers[m_image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+	
+	vkBeginCommandBuffer(m_transition_image_layout_buffers[m_image_index], &begin_info);
+
 	vkCmdPipelineBarrier(
-		buffer,
+		m_transition_image_layout_buffers[m_image_index],
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		0,
@@ -436,24 +397,28 @@ VkCommandBuffer VulkanContext::transition_swapchain_image_to_present_layout() {
 		1, &barrier
 	);
 
-	vkEndCommandBuffer(buffer);
+	vkEndCommandBuffer(m_transition_image_layout_buffers[m_image_index]);
 
-	return buffer;
+	return m_transition_image_layout_buffers[m_image_index];
 }
 
 void VulkanContext::begin_rendering() {
 	create_sync_objects();
 
-	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphores[m_current_frame]);
-
+	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphore);
+	
 	begin_new_render_buffer();
 }
 
 void VulkanContext::end_rendering() {
 	vkDeviceWaitIdle(m_device->device());
 
-	for (VkCommandBuffer cb : m_render_buffers)
-		vkResetCommandBuffer(cb, 0);
+	uint32_t image_count = m_swapchain.image_count();
+	for (uint32_t i = 0; i < image_count; i++) {
+		vkResetCommandBuffer(m_render_buffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+		vkResetCommandBuffer(m_transition_image_layout_buffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+	}
+	vkResetCommandBuffer(m_memory_buffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 
 	destroy_sync_objects();
 }
@@ -476,7 +441,6 @@ void VulkanContext::destroy_surface() {
 
 void VulkanContext::destroy_swapchain() {
 	m_swapchain.destroy();
-	m_frames_in_flight = 0;
 }
 
 void VulkanContext::destroy_command_pool() {
@@ -484,18 +448,12 @@ void VulkanContext::destroy_command_pool() {
 }
 
 void VulkanContext::destroy_sync_objects() {
-	for (size_t i = 0; i < m_frames_in_flight; i++) {
-		vkDestroySemaphore(m_device->device(), m_image_available_semaphores[i], nullptr);
-		vkDestroySemaphore(m_device->device(), m_render_finished_semaphores[i], nullptr);
-		vkDestroySemaphore(m_device->device(), m_presentation_ready_semaphores[i], nullptr);
-		vkDestroyFence(m_device->device(), m_in_flight_fences[i], nullptr);
-	}
-	vkDestroyFence(m_device->device(), m_mem_command_fence, nullptr);
+	vkDestroySemaphore(m_device->device(), m_image_available_semaphore, nullptr);
+	vkDestroySemaphore(m_device->device(), m_presentation_ready_semaphore, nullptr);
+	vkDestroySemaphore(m_device->device(), m_render_finished_semaphore, nullptr);
 
-	m_image_available_semaphores.clear();
-	m_render_finished_semaphores.clear();
-	m_in_flight_fences.clear();
-	m_images_in_flight.clear();
+	vkDestroyFence(m_device->device(), m_render_commands_fence, nullptr);
+	vkDestroyFence(m_device->device(), m_mem_commands_fence, nullptr);
 }
 
 const std::vector<const char*>& VulkanContext::get_required_extensions() {

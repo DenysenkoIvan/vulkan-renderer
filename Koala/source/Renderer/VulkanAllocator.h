@@ -28,6 +28,8 @@ public:
 
 	void free_staging_buffers();
 
+	void update_buffer(VkBuffer buffer, const void* data, VkDeviceSize size);
+
 	BufferAllocationInfo allocate_buffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
 	ImageAllocationInfo allocate_image(const void* data, uint32_t size, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageLayout layout, VkImageAspectFlags aspect);
 	ImageAllocationInfo allocate_empty_image(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageLayout layout, VkImageAspectFlags aspect);

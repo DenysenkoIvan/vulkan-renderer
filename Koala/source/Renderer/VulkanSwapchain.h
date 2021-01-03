@@ -48,7 +48,7 @@ private:
 	
 	std::vector<VkImage> m_images;
 	std::vector<VkImageView> m_image_views;
-
+	
 	VkSurfaceFormatKHR m_surface_format;
 	VkPresentModeKHR m_present_mode;
 	VkExtent2D m_image_extent;

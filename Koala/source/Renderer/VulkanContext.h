@@ -47,7 +47,6 @@ private:
 	void execute_memory_commands();
 	void execute_render_commands();
 
-	VkCommandBuffer begin_single_time_submit_buffer();
 	VkCommandBuffer transition_swapchain_image_to_present_layout();
 
 	void begin_rendering();
@@ -77,20 +76,18 @@ private:
 
 	VulkanSwapchain m_swapchain;
 	
-	bool m_execute_memory_commands = false;
+	bool m_should_execute_mem_commands = false;
 	VkCommandPool m_command_pool;
 	VkCommandBuffer m_memory_buffer;
 	std::vector<VkCommandBuffer> m_render_buffers;
+	std::vector<VkCommandBuffer> m_transition_image_layout_buffers;
 	
 	bool m_should_resize = false;
 
-	uint32_t m_frames_in_flight = 0;
 	uint32_t m_image_index = ~0;
-	uint32_t m_current_frame = 0;
-	VkFence m_mem_command_fence;
-	std::vector<VkSemaphore> m_image_available_semaphores;
-	std::vector<VkSemaphore> m_render_finished_semaphores;
-	std::vector<VkSemaphore> m_presentation_ready_semaphores;
-	std::vector<VkFence> m_in_flight_fences;
-	std::vector<VkFence> m_images_in_flight;
+	VkFence m_mem_commands_fence;
+	VkFence m_render_commands_fence;
+	VkSemaphore m_render_finished_semaphore;
+	VkSemaphore m_presentation_ready_semaphore;
+	VkSemaphore m_image_available_semaphore;
 };
