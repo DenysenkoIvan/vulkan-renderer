@@ -114,7 +114,7 @@ void Shader::reflect_vertex_shader(spv_reflect::ShaderModule& shader_module) {
 	std::vector<SpvReflectDescriptorSet*> sets(set_count);
 	shader_module.EnumerateDescriptorSets(&set_count, sets.data());
 
-	reflect_descriptor_sets(sets);
+	reflect_descriptor_sets(sets, shader_module.GetShaderStage());
 
 	uint32_t input_var_count = 0;
 	shader_module.EnumerateInputVariables(&input_var_count, nullptr);
@@ -130,10 +130,10 @@ void Shader::reflect_fragment_shader(spv_reflect::ShaderModule& shader_module) {
 	std::vector<SpvReflectDescriptorSet*> sets(set_count);
 	shader_module.EnumerateDescriptorSets(&set_count, sets.data());
 
-	reflect_descriptor_sets(sets);
+	reflect_descriptor_sets(sets, shader_module.GetShaderStage());
 }
 
-void Shader::reflect_descriptor_sets(const std::vector<SpvReflectDescriptorSet*>& sets) {
+void Shader::reflect_descriptor_sets(const std::vector<SpvReflectDescriptorSet*>& sets, VkShaderStageFlags stage) {
 	for (SpvReflectDescriptorSet* set : sets) {
 		auto set_it = std::find_if(m_descriptor_sets_info.begin(), m_descriptor_sets_info.end(), [set = set->set](const auto& dsi) {
 			return dsi.set_info.set == set;
@@ -154,19 +154,20 @@ void Shader::reflect_descriptor_sets(const std::vector<SpvReflectDescriptorSet*>
 
 		std::vector<UniformInfo>& uniforms = set_it->set_info.uniforms;
 		for (size_t i = 0; i < set->binding_count; i++)
-			reflect_descriptor_binding(uniforms, set->bindings[i]);
+			reflect_descriptor_binding(uniforms, set->bindings[i], stage);
 
 		std::sort(uniforms.begin(), uniforms.end());
 	}
 }
 
-void Shader::reflect_descriptor_binding(std::vector<UniformInfo>& uniforms, SpvReflectDescriptorBinding* binding) {
+void Shader::reflect_descriptor_binding(std::vector<UniformInfo>& uniforms, SpvReflectDescriptorBinding* binding, VkShaderStageFlags stage) {
 	if (std::find_if(uniforms.begin(), uniforms.end(), [=](const auto& ui) { return ui.binding == binding->binding; }) != end(uniforms))
 		throw std::runtime_error("Binding rebinding");
 
 	UniformInfo uniform{
 		.name = binding->name,
 		.type = (UniformType)binding->descriptor_type,
+		.stage = (ShaderStage)stage,
 		.binding = binding->binding,
 		.count = binding->count
 	};

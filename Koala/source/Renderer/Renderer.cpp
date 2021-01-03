@@ -1,6 +1,7 @@
 #include "Renderer.h"
 #include "Shader.h"
 #include "VulkanBuffer.h"
+#include "VulkanImage.h"
 
 #include <array>
 
@@ -9,7 +10,10 @@ void Renderer::create(std::shared_ptr<VulkanContext> context) {
 
 	Shader::set_context(context);
 	VulkanBuffer::set_context(context);
+	VulkanImage::set_context(context);
 
+	find_depth_format();
+	create_depth_resources();
 	create_render_passes();
 	create_framebuffers();
 	create_pipeline();
@@ -19,6 +23,7 @@ void Renderer::create(std::shared_ptr<VulkanContext> context) {
 
 void Renderer::destroy() {
 	vkDestroyPipeline(m_context->device().device(), m_pipeline, nullptr);
+	destroy_depth_resources();
 	destroy_framebuffers();
 	destroy_render_passes();
 }
@@ -27,7 +32,11 @@ void Renderer::on_resize(uint32_t width, uint32_t height) {
 	//m_context->end_frame();
 
 	m_context->on_resize(width, height);
+	
 	destroy_framebuffers();
+	destroy_depth_resources();
+
+	create_depth_resources();
 	create_framebuffers();
 
 	m_context->begin_frame();
@@ -74,6 +83,33 @@ void Renderer::display() {
 	m_context->end_frame();
 
 	m_context->begin_frame();
+}
+
+void Renderer::find_depth_format() {
+	VkFormatFeatureFlags features = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	VkFormatProperties props;
+
+	props = m_context->physical_device().format_properties(VK_FORMAT_D24_UNORM_S8_UINT);
+	if ((props.optimalTilingFeatures & features) == features) {
+		m_depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
+		return;
+	}
+
+	props = m_context->physical_device().format_properties(VK_FORMAT_D32_SFLOAT);
+	if ((props.optimalTilingFeatures & features) == features) {
+		m_depth_format = VK_FORMAT_D32_SFLOAT;
+		return;
+	}
+
+	props = m_context->physical_device().format_properties(VK_FORMAT_D32_SFLOAT_S8_UINT);
+	if ((props.optimalTilingFeatures & features) == features) {
+		m_depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+		return;
+	}
+}
+
+void Renderer::create_depth_resources() {
+	m_depth_image.create(m_context->swapchain().image_extent(), m_depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
 void Renderer::create_render_passes() {
@@ -336,6 +372,10 @@ void Renderer::create_pipeline() {
 
 	if (vkCreateGraphicsPipelines(m_context->device().device(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &m_pipeline) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create graphics pipeline");
+}
+
+void Renderer::destroy_depth_resources() {
+	m_depth_image.destroy();
 }
 
 void Renderer::destroy_render_passes() {

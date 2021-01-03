@@ -17,7 +17,7 @@ public:
 	void create(GLFWwindow* window);
 	~VulkanContext();
 
-	const VulkanAllocator& allocator() const { return m_allocator; }
+	VulkanAllocator& allocator() { return m_allocator; }
 	const VulkanPhysicalDevice& physical_device() const { return *m_physical_device; }
 	const VulkanDevice& device() const { return *m_device; }
 	VulkanSwapchain& swapchain() { return m_swapchain; }

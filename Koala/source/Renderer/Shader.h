@@ -42,8 +42,8 @@ private:
 	void reflect_shader(const std::vector<uint8_t>& spv_code);
 	void reflect_vertex_shader(spv_reflect::ShaderModule& shader_module);
 	void reflect_fragment_shader(spv_reflect::ShaderModule& shader_module);
-	void reflect_descriptor_sets(const std::vector<SpvReflectDescriptorSet*>& sets);
-	void reflect_descriptor_binding(std::vector<UniformInfo>& uniforms, SpvReflectDescriptorBinding* binding);
+	void reflect_descriptor_sets(const std::vector<SpvReflectDescriptorSet*>& sets, VkShaderStageFlags stage);
+	void reflect_descriptor_binding(std::vector<UniformInfo>& uniforms, SpvReflectDescriptorBinding* binding, VkShaderStageFlags stage);
 	void create_descriptor_set_layouts();
 	void create_pipeline_layout();
 	VkPipelineShaderStageCreateInfo create_pipeline_shader_stage_create_info(VkShaderModule shader_module, VkShaderStageFlags stage);

@@ -32,6 +32,13 @@ VkBool32 VulkanPhysicalDevice::pick(VkInstance instance, const std::vector<const
 	return VK_SUCCESS;
 }
 
+VkFormatProperties VulkanPhysicalDevice::format_properties(VkFormat format) const {
+	VkFormatProperties props;
+	vkGetPhysicalDeviceFormatProperties(m_physical_device, format, &props);
+
+	return props;
+}
+
 uint32_t VulkanPhysicalDevice::calculate_priority(VkPhysicalDevice physical_device, const std::vector<const char*>& required_extensions, VkSurfaceKHR surface) {
 	if (!has_extensions_support(physical_device, required_extensions)) return 0;
 	if (!has_complete_queue_families(physical_device, surface)) return 0;
@@ -95,7 +102,7 @@ void VulkanPhysicalDevice::save_physical_device(VkPhysicalDevice physical_device
 	vkGetPhysicalDeviceProperties(m_physical_device, &m_properties);
 	vkGetPhysicalDeviceMemoryProperties(m_physical_device, &m_memory_properties);
 	vkGetPhysicalDeviceFeatures(m_physical_device, &m_features);
-	
+
 	auto [graphics_family, present_family] = retrieve_queue_families(physical_device, surface);
 
 	m_graphics_family = graphics_family;

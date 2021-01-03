@@ -332,14 +332,21 @@ void VulkanContext::execute_memory_commands() {
 	vkResetFences(m_device->device(), 1, &m_mem_command_fence);
 
 	// TODO: Delete this line
-	std::cout << "Submitting memory commands\n";
+	//std::cout << "Submitting memory commands\n";
 
-	VkResult res = vkQueueSubmit(m_device->graphics_queue(), 1, &memory_submit_info, m_mem_command_fence);
+	vkQueueSubmit(m_device->graphics_queue(), 1, &memory_submit_info, m_mem_command_fence);
 
 	vkWaitForFences(m_device->device(), 1, &m_mem_command_fence, VK_TRUE, UINT64_MAX);
+
+	m_allocator.free_staging_buffers();
 }
 
 void VulkanContext::execute_render_commands() {
+	if (m_execute_memory_commands) {
+		m_execute_memory_commands = false;
+		execute_memory_commands();
+	}
+
 	vkEndCommandBuffer(m_render_buffers[m_image_index]);
 
 	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
@@ -373,7 +380,7 @@ void VulkanContext::execute_render_commands() {
 	vkResetFences(m_device->device(), 1, &m_in_flight_fences[m_current_frame]);
 
 	// TODO: Delete this line
-	std::cout << "Submitting render commands\n";
+	//std::cout << "Submitting render commands\n";
 
 	std::array<VkSubmitInfo, 2> submit_infos{
 		render_submit_info,

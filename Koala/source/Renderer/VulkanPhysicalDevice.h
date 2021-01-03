@@ -26,6 +26,7 @@ public:
 	const VkPhysicalDeviceMemoryProperties& memory_properties() const { return m_memory_properties; }
 	const VkPhysicalDeviceFeatures& features() const { return m_features; }
 	const VkPhysicalDeviceLimits& limits() const { return m_properties.limits; }
+	VkFormatProperties format_properties(VkFormat format) const;
 	
 private:
 	uint32_t calculate_priority(VkPhysicalDevice physical_device, const std::vector<const char*>& required_extensions, VkSurfaceKHR surface);

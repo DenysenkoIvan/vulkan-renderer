@@ -19,9 +19,15 @@ enum class UniformType {
 	InputAttachment
 };
 
+enum class ShaderStage {
+	Vertex = 1,
+	Fragment = 16
+};
+
 struct UniformInfo {
 	std::string name;
 	UniformType type;
+	ShaderStage stage;
 	uint32_t binding;
 	uint32_t count;
 
