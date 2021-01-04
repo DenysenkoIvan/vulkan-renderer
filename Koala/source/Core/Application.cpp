@@ -124,6 +124,6 @@ void Application::on_render() {
 	
 	m_renderer.display();
 
-	//for (const auto& layer : m_layer_stack)
-	//	layer->on_render();
+	for (const auto& layer : m_layer_stack)
+		layer->on_render();
 }
