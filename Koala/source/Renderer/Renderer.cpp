@@ -46,8 +46,8 @@ void Renderer::submit_geometry(VertexBuffer& vertex_buffer, IndexBuffer& index_b
 	VkRenderPassBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = m_draw_render_pass,
-		.framebuffer = m_draw_framebuffers[m_context->image_index()],
-		.renderArea = { .offset = { 0, 0 }, .extent = m_context->swapchain().image_extent() }
+		.framebuffer = m_draw_framebuffers[m_context->swapchain().image_index()],
+		.renderArea = { .offset = { 0, 0 }, .extent = m_context->swapchain().extent() }
 	};
 
 	VkBuffer vertex_buffers[] = { vertex_buffer.buffer().buffer() };
@@ -67,8 +67,8 @@ void Renderer::clear_screen(VkClearValue clear_value) {
 	VkRenderPassBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = m_clear_screen_render_pass,
-		.framebuffer = m_clear_screen_framebuffers[m_context->image_index()],
-		.renderArea = { { 0, 0 }, m_context->swapchain().image_extent() },
+		.framebuffer = m_clear_screen_framebuffers[m_context->swapchain().image_index()],
+		.renderArea = { { 0, 0 }, m_context->swapchain().extent() },
 		.clearValueCount = 1,
 		.pClearValues = &clear_value
 	};
@@ -109,7 +109,7 @@ void Renderer::find_depth_format() {
 }
 
 void Renderer::create_depth_resources() {
-	m_depth_image.create(m_context->swapchain().image_extent(), m_depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+	m_depth_image.create(m_context->swapchain().extent(), m_depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
 void Renderer::create_render_passes() {
@@ -222,8 +222,8 @@ void Renderer::create_draw_framebuffers() {
 	VkFramebufferCreateInfo framebuffer_info{
 		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 		.renderPass = m_draw_render_pass,
-		.width = m_context->swapchain().image_extent().width,
-		.height = m_context->swapchain().image_extent().height,
+		.width = m_context->swapchain().extent().width,
+		.height = m_context->swapchain().extent().height,
 		.layers = 1
 	};
 
@@ -245,8 +245,8 @@ void Renderer::create_clear_screen_framebuffers() {
 		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 		.renderPass = m_clear_screen_render_pass,
 		.attachmentCount = 1,
-		.width = m_context->swapchain().image_extent().width,
-		.height = m_context->swapchain().image_extent().height,
+		.width = m_context->swapchain().extent().width,
+		.height = m_context->swapchain().extent().height,
 		.layers = 1
 	};
 
@@ -296,15 +296,15 @@ void Renderer::create_pipeline() {
 	VkViewport viewport{
 		.x = 0,
 		.y = 0,
-		.width = (float)m_context->swapchain().image_extent().width,
-		.height = (float)m_context->swapchain().image_extent().height,
+		.width = (float)m_context->swapchain().extent().width,
+		.height = (float)m_context->swapchain().extent().height,
 		.minDepth = 0.0f,
 		.maxDepth = 1.0f
 	};
 	
 	VkRect2D scissor{
 		.offset = { 0, 0 },
-		.extent = m_context->swapchain().image_extent()
+		.extent = m_context->swapchain().extent()
 	};
 
 	VkPipelineViewportStateCreateInfo viewport_state{

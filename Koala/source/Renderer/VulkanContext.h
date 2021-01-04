@@ -27,7 +27,7 @@ public:
 
 	void submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun);
 	
-	uint32_t image_index() const { return m_image_index; }
+	//uint32_t image_index() const { return m_image_index; }
 
 	void on_resize(uint32_t width, uint32_t height);
 
@@ -38,7 +38,6 @@ private:
 	void pick_physical_device();
 	void create_device();
 	void create_allocator();
-	void create_swapchain();
 	void create_command_pool();
 	void allocate_command_buffers();
 	void create_sync_objects();
@@ -80,6 +79,8 @@ private:
 	VulkanSwapchain m_swapchain;
 	
 	bool m_should_execute_mem_commands = false;
+	const uint32_t m_buffer_count = 2;
+	uint32_t m_buffer_index = 0;
 	VkCommandPool m_command_pool;
 	VkCommandBuffer m_memory_buffer;
 	std::vector<VkCommandBuffer> m_render_buffers;
@@ -88,7 +89,7 @@ private:
 	
 	bool m_should_resize = false;
 
-	uint32_t m_image_index = ~0;
+	//uint32_t m_image_index = ~0;
 	VkFence m_mem_commands_fence = VK_NULL_HANDLE;
 	VkFence m_render_commands_fence = VK_NULL_HANDLE;
 	VkSemaphore m_image_available_semaphore = VK_NULL_HANDLE;

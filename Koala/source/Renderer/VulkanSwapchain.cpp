@@ -28,21 +28,19 @@ void VulkanSwapchain::destroy() {
 }
 
 uint32_t VulkanSwapchain::acquire_next_image(VkSemaphore signal_semaphore) {
-	uint32_t image_index = 0;
-	
-	vkAcquireNextImageKHR(m_device->device(), m_swapchain, UINT64_MAX, signal_semaphore, VK_NULL_HANDLE, &image_index);
+	vkAcquireNextImageKHR(m_device->device(), m_swapchain, UINT64_MAX, signal_semaphore, VK_NULL_HANDLE, &m_image_index);
 
-	return image_index;
+	return m_image_index;
 }
 
-void VulkanSwapchain::present(VkSemaphore wait_semaphore, uint32_t image_index) {
+void VulkanSwapchain::present(VkSemaphore wait_semaphore) {
 	VkPresentInfoKHR present_info{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &wait_semaphore,
 		.swapchainCount = 1,
 		.pSwapchains = &m_swapchain,
-		.pImageIndices = &image_index
+		.pImageIndices = &m_image_index
 	};
 
 	vkQueuePresentKHR(m_device->present_queue(), &present_info);

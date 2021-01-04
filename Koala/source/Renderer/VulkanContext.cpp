@@ -33,7 +33,7 @@ void VulkanContext::create(GLFWwindow* window) {
 
 	create_allocator();
 
-	create_swapchain();
+	m_swapchain.create(m_physical_device, m_surface, m_device);
 
 	create_command_pool();
 	allocate_command_buffers();
@@ -76,9 +76,10 @@ void VulkanContext::begin_frame() {
 void VulkanContext::end_frame() {
 	execute_render_commands();
 
-	m_swapchain.present(m_presentation_ready_semaphore, m_image_index);
+	m_swapchain.present(m_presentation_ready_semaphore);
 	
-	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphore);
+	m_swapchain.acquire_next_image(m_image_available_semaphore);
+	m_buffer_index = (m_buffer_index + 1) % m_buffer_count;
 
 	vkWaitForFences(m_device->device(), 1, &m_render_commands_fence, VK_TRUE, UINT64_MAX);
 
@@ -91,7 +92,7 @@ void VulkanContext::submit_render_commands(const std::function<void(VkCommandBuf
 		execute_memory_commands();
 	}
 
-	submit_fun(m_render_buffers[m_image_index]);
+	submit_fun(m_render_buffers[m_buffer_index]);
 }
 
 void VulkanContext::create_instance() {
@@ -193,12 +194,6 @@ void VulkanContext::create_allocator() {
 	});
 }
 
-void VulkanContext::create_swapchain() {
-	m_swapchain.create(m_physical_device, m_surface, m_device);
-
-	uint32_t image_count = (uint32_t)m_swapchain.images().size();
-}
-
 void VulkanContext::create_command_pool() {
 	VkCommandPoolCreateInfo pool_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -211,17 +206,15 @@ void VulkanContext::create_command_pool() {
 }
 
 void VulkanContext::allocate_command_buffers() {
-	uint32_t buffer_count = (uint32_t)m_swapchain.image_count();
-	
-	m_image_to_attachment_layout_buffers.resize(buffer_count);
-	m_render_buffers.resize(buffer_count);
-	m_image_to_present_layout_buffers.resize(buffer_count);
+	m_image_to_attachment_layout_buffers.resize(m_buffer_count);
+	m_render_buffers.resize(m_buffer_count);
+	m_image_to_present_layout_buffers.resize(m_buffer_count);
 
 	VkCommandBufferAllocateInfo render_buffer_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 		.commandPool = m_command_pool,
 		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = buffer_count
+		.commandBufferCount = m_buffer_count
 	};
 
 	VkCommandBufferAllocateInfo memory_buffer_info{
@@ -274,30 +267,30 @@ void VulkanContext::begin_memory_buffer() {
 }
 
 void VulkanContext::begin_new_render_buffer() {
-	vkResetCommandBuffer(m_render_buffers[m_image_index], 0);
+	vkResetCommandBuffer(m_render_buffers[m_buffer_index], 0);
 
 	VkCommandBufferBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	if (vkBeginCommandBuffer(m_render_buffers[m_image_index], &begin_info) != VK_SUCCESS)
+	if (vkBeginCommandBuffer(m_render_buffers[m_buffer_index], &begin_info) != VK_SUCCESS)
 		throw std::runtime_error("Failed to begin command buffer");
 
 	VkViewport viewport{
 		.x = 0,
 		.y = 0,
-		.width = (float)m_swapchain.image_extent().width,
-		.height = (float)m_swapchain.image_extent().height
+		.width = (float)m_swapchain.extent().width,
+		.height = (float)m_swapchain.extent().height
 	};
 
 	VkRect2D scissor{
 		.offset = { 0, 0 },
-		.extent = { m_swapchain.image_extent().width, m_swapchain.image_extent().height }
+		.extent = { m_swapchain.extent().width, m_swapchain.extent().height }
 	};
 
-	vkCmdSetViewport(m_render_buffers[m_image_index], 0, 1, &viewport);
-	vkCmdSetScissor(m_render_buffers[m_image_index], 0, 1, &scissor);
+	vkCmdSetViewport(m_render_buffers[m_buffer_index], 0, 1, &viewport);
+	vkCmdSetScissor(m_render_buffers[m_buffer_index], 0, 1, &scissor);
 }
 
 void VulkanContext::execute_memory_commands() {
@@ -350,7 +343,7 @@ void VulkanContext::execute_render_commands() {
 }
 
 VkSubmitInfo VulkanContext::submit_transition_to_attachment_layout() {
-	vkResetCommandBuffer(m_image_to_attachment_layout_buffers[m_image_index], 0);
+	vkResetCommandBuffer(m_image_to_attachment_layout_buffers[m_buffer_index], 0);
 
 	VkImageMemoryBarrier barrier{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -360,7 +353,7 @@ VkSubmitInfo VulkanContext::submit_transition_to_attachment_layout() {
 		.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = m_swapchain.images()[m_image_index],
+		.image = m_swapchain.images()[m_swapchain.image_index()],
 		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
 	};
 
@@ -369,10 +362,10 @@ VkSubmitInfo VulkanContext::submit_transition_to_attachment_layout() {
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	vkBeginCommandBuffer(m_image_to_attachment_layout_buffers[m_image_index], &begin_info);
+	vkBeginCommandBuffer(m_image_to_attachment_layout_buffers[m_buffer_index], &begin_info);
 
 	vkCmdPipelineBarrier(
-		m_image_to_attachment_layout_buffers[m_image_index],
+		m_image_to_attachment_layout_buffers[m_buffer_index],
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		0,
@@ -381,14 +374,14 @@ VkSubmitInfo VulkanContext::submit_transition_to_attachment_layout() {
 		1, &barrier
 	);
 
-	vkEndCommandBuffer(m_image_to_attachment_layout_buffers[m_image_index]);
+	vkEndCommandBuffer(m_image_to_attachment_layout_buffers[m_buffer_index]);
 
 	VkSubmitInfo submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &m_image_available_semaphore,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &m_image_to_attachment_layout_buffers[m_image_index],
+		.pCommandBuffers = &m_image_to_attachment_layout_buffers[m_buffer_index],
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &m_attachment_ready_semaphore
 	};
@@ -397,14 +390,14 @@ VkSubmitInfo VulkanContext::submit_transition_to_attachment_layout() {
 }
 
 VkSubmitInfo VulkanContext::submit_render() {
-	vkEndCommandBuffer(m_render_buffers[m_image_index]);
+	vkEndCommandBuffer(m_render_buffers[m_buffer_index]);
 
 	VkSubmitInfo submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &m_attachment_ready_semaphore,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &m_render_buffers[m_image_index],
+		.pCommandBuffers = &m_render_buffers[m_buffer_index],
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &m_render_finished_semaphore
 	};
@@ -413,14 +406,14 @@ VkSubmitInfo VulkanContext::submit_render() {
 }
 
 VkSubmitInfo VulkanContext::submit_transition_to_present_layout() {
-	vkResetCommandBuffer(m_image_to_present_layout_buffers[m_image_index], 0);
+	vkResetCommandBuffer(m_image_to_present_layout_buffers[m_buffer_index], 0);
 	
 	VkCommandBufferBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	vkBeginCommandBuffer(m_image_to_present_layout_buffers[m_image_index], &begin_info);
+	vkBeginCommandBuffer(m_image_to_present_layout_buffers[m_buffer_index], &begin_info);
 	
 	VkImageMemoryBarrier barrier{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -430,12 +423,12 @@ VkSubmitInfo VulkanContext::submit_transition_to_present_layout() {
 		.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = m_swapchain.images()[m_image_index],
+		.image = m_swapchain.images()[m_swapchain.image_index()],
 		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
 	};
 
 	vkCmdPipelineBarrier(
-		m_image_to_present_layout_buffers[m_image_index],
+		m_image_to_present_layout_buffers[m_buffer_index],
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		0,
@@ -444,14 +437,14 @@ VkSubmitInfo VulkanContext::submit_transition_to_present_layout() {
 		1, &barrier
 	);
 
-	vkEndCommandBuffer(m_image_to_present_layout_buffers[m_image_index]);
+	vkEndCommandBuffer(m_image_to_present_layout_buffers[m_buffer_index]);
 
 	VkSubmitInfo submit_info{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &m_render_finished_semaphore,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &m_image_to_present_layout_buffers[m_image_index],
+		.pCommandBuffers = &m_image_to_present_layout_buffers[m_buffer_index],
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &m_presentation_ready_semaphore
 	};
@@ -462,16 +455,16 @@ VkSubmitInfo VulkanContext::submit_transition_to_present_layout() {
 void VulkanContext::begin_rendering() {
 	create_sync_objects();
 
-	m_image_index = m_swapchain.acquire_next_image(m_image_available_semaphore);
-	
+	m_swapchain.acquire_next_image(m_image_available_semaphore);
+	m_buffer_index = 0;
+
 	begin_new_render_buffer();
 }
 
 void VulkanContext::end_rendering() {
 	vkDeviceWaitIdle(m_device->device());
 
-	uint32_t image_count = (uint32_t)m_swapchain.image_count();
-	for (uint32_t i = 0; i < image_count; i++) {
+	for (uint32_t i = 0; i < m_buffer_count; i++) {
 		vkResetCommandBuffer(m_image_to_attachment_layout_buffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 		vkResetCommandBuffer(m_render_buffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 		vkResetCommandBuffer(m_image_to_present_layout_buffers[i], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
@@ -502,10 +495,9 @@ void VulkanContext::destroy_swapchain() {
 }
 
 void VulkanContext::free_command_buffers() {
-	uint32_t buffer_count = (uint32_t)m_swapchain.image_count();
-	vkFreeCommandBuffers(m_device->device(), m_command_pool, buffer_count, m_image_to_attachment_layout_buffers.data());
-	vkFreeCommandBuffers(m_device->device(), m_command_pool, buffer_count, m_render_buffers.data());
-	vkFreeCommandBuffers(m_device->device(), m_command_pool, buffer_count, m_image_to_present_layout_buffers.data());
+	vkFreeCommandBuffers(m_device->device(), m_command_pool, m_buffer_count, m_image_to_attachment_layout_buffers.data());
+	vkFreeCommandBuffers(m_device->device(), m_command_pool, m_buffer_count, m_render_buffers.data());
+	vkFreeCommandBuffers(m_device->device(), m_command_pool, m_buffer_count, m_image_to_present_layout_buffers.data());
 	vkFreeCommandBuffers(m_device->device(), m_command_pool, 1, &m_memory_buffer);
 }
 

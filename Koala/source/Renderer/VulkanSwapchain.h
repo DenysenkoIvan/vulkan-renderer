@@ -15,16 +15,17 @@ public:
 
 	size_t image_count() const { return m_images.size(); }
 	VkFormat format() const { return m_surface_format.format; }
-	VkExtent2D image_extent() const { return m_image_extent; }
+	VkExtent2D extent() const { return m_image_extent; }
 
 	const std::vector<VkImage>& images() const { return m_images; }
 	const std::vector<VkImageView>& image_views() const { return m_image_views; }
-	
+
+	uint32_t image_index() const { return m_image_index; }
+
 	uint32_t acquire_next_image(VkSemaphore signal_semaphore);
-	void present(VkSemaphore wait_semaphore, uint32_t image_index);
+	void present(VkSemaphore wait_semaphore);
 
 	void on_resize(uint32_t width, uint32_t height);
-
 
 private:
 	void retrieve_surface_properties();
@@ -39,7 +40,6 @@ private:
 
 private:
 	VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
-	size_t m_current_frame = 0;
 	uint32_t m_image_index = 0;
 
 	VkSurfaceKHR m_surface;
