@@ -26,8 +26,6 @@ public:
 	void end_frame();
 
 	void submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun);
-	
-	//uint32_t image_index() const { return m_image_index; }
 
 	void on_resize(uint32_t width, uint32_t height);
 

@@ -28,7 +28,7 @@ void VulkanAllocator::update_buffer(VkBuffer buffer, const void* data, VkDeviceS
 
 BufferAllocationInfo VulkanAllocator::allocate_buffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage) {
 	VkBuffer staging_buffer = create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	VkDeviceMemory staging_memory = allocate_buffer_memory(staging_buffer, size, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	VkDeviceMemory staging_memory = allocate_buffer_memory(staging_buffer, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	void* staging_data = nullptr;
 	vkMapMemory(m_device->device(), staging_memory, 0, size, 0, &staging_data);
@@ -36,7 +36,7 @@ BufferAllocationInfo VulkanAllocator::allocate_buffer(const void* data, VkDevice
 	vkUnmapMemory(m_device->device(), staging_memory);
 
 	VkBuffer buffer = create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage);
-	VkDeviceMemory buffer_memory = allocate_buffer_memory(buffer, size, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VkDeviceMemory buffer_memory = allocate_buffer_memory(buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	VkBufferCopy copy_region{
 		.size = size
@@ -53,7 +53,7 @@ BufferAllocationInfo VulkanAllocator::allocate_buffer(const void* data, VkDevice
 
 ImageAllocationInfo VulkanAllocator::allocate_image(const void* data, uint32_t size, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage, VkImageLayout layout, VkImageAspectFlags aspect) {
 	VkBuffer staging_buffer = create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-	VkDeviceMemory staging_memory = allocate_buffer_memory(staging_buffer, size, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	VkDeviceMemory staging_memory = allocate_buffer_memory(staging_buffer, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	void* staging_data = nullptr;
 	vkMapMemory(m_device->device(), staging_memory, 0, size, 0, &staging_data);
@@ -63,11 +63,25 @@ ImageAllocationInfo VulkanAllocator::allocate_image(const void* data, uint32_t s
 	VkImage image = create_image(extent, format, usage);
 	VkDeviceMemory image_memory = allocate_image_memory(image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	transition_image_layout(image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	transition_image_layout(
+		image,
+		format,
+		VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		aspect,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 
 	copy_buffer_to_image(staging_buffer, image, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-	transition_image_layout(image, format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout);
+	transition_image_layout(
+		image,
+		format,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		layout,
+		aspect,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
 
 	VkImageView image_view = create_image_view(image, format, aspect);
 
@@ -103,7 +117,7 @@ VkBuffer VulkanAllocator::create_buffer(VkDeviceSize size, VkBufferUsageFlags us
 	return buffer;
 }
 
-VkDeviceMemory VulkanAllocator::allocate_buffer_memory(VkBuffer buffer, VkDeviceSize size, VkMemoryPropertyFlags properties) const {
+VkDeviceMemory VulkanAllocator::allocate_buffer_memory(VkBuffer buffer, VkMemoryPropertyFlags properties) const {
 	VkMemoryRequirements mem_reqs;
 	vkGetBufferMemoryRequirements(m_device->device(), buffer, &mem_reqs);
 
@@ -126,6 +140,16 @@ ImageAllocationInfo VulkanAllocator::allocate_empty_image(VkExtent2D extent, VkF
 	VkImage image = create_image(extent, format, usage);
 	VkDeviceMemory image_memory = allocate_image_memory(image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	VkImageView image_view = create_image_view(image, format, aspect);
+
+	transition_image_layout(
+		image,
+		format,
+		VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		aspect,
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+	);
 
 	return { image, image_memory, image_view };
 }
@@ -187,23 +211,32 @@ VkImageView VulkanAllocator::create_image_view(VkImage image, VkFormat format, V
 	return image_view;
 }
 
-void VulkanAllocator::transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout) const {
+void VulkanAllocator::transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout, VkImageAspectFlags aspect, VkAccessFlags src_access, VkAccessFlags dst_access) const {
 	VkImageMemoryBarrier barrier{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+		.srcAccessMask = src_access,
+		.dstAccessMask = dst_access,
 		.oldLayout = old_layout,
 		.newLayout = new_layout,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = image,
-		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
+		.subresourceRange = { aspect, 0, 1, 0, 1 }
 	};
-	
+
+	VkPipelineStageFlags src_stage, dst_stage;
+	if (src_access == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) {
+		src_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		dst_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	} else {
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	}
+
 	m_submit_memory_commands_fun([&](VkCommandBuffer cmd_buffer) {
 		vkCmdPipelineBarrier(
 			cmd_buffer,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			src_stage, dst_stage,
 			0,
 			0, nullptr,
 			0, nullptr,

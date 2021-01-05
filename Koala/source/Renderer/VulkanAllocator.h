@@ -38,14 +38,14 @@ private:
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
 	VkBuffer create_buffer(VkDeviceSize size, VkBufferUsageFlags usage) const;
-	VkDeviceMemory allocate_buffer_memory(VkBuffer buffer, VkDeviceSize size, VkMemoryPropertyFlags properties) const;
+	VkDeviceMemory allocate_buffer_memory(VkBuffer buffer, VkMemoryPropertyFlags properties) const;
 
 	VkImage create_image(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) const;
 	VkDeviceMemory allocate_image_memory(VkImage, VkMemoryPropertyFlags mem_properties) const;
 	VkImageView create_image_view(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
 
 	void copy_buffer_to_image(VkBuffer buffer, VkImage image, VkExtent2D extent, VkImageLayout layout) const;
-	void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout) const;
+	void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout, VkImageAspectFlags aspect, VkAccessFlags src_access, VkAccessFlags dst_access) const;
 
 private:
 	std::function<void(const std::function<void(VkCommandBuffer)>&)> m_submit_memory_commands_fun;

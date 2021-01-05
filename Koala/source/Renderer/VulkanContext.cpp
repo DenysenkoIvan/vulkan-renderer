@@ -69,11 +69,14 @@ void VulkanContext::on_resize(uint32_t width, uint32_t height) {
 }
 
 void VulkanContext::begin_frame() {
-	begin_memory_buffer();
 	begin_new_render_buffer();
 }
 
 void VulkanContext::end_frame() {
+	if (m_should_execute_mem_commands) {
+		m_should_execute_mem_commands = false;
+		execute_memory_commands();
+	}
 	execute_render_commands();
 
 	m_swapchain.present(m_presentation_ready_semaphore);
@@ -82,17 +85,27 @@ void VulkanContext::end_frame() {
 	m_buffer_index = (m_buffer_index + 1) % m_buffer_count;
 
 	vkWaitForFences(m_device->device(), 1, &m_render_commands_fence, VK_TRUE, UINT64_MAX);
-
-	begin_new_render_buffer();
 }
 
 void VulkanContext::submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun) {
-	if (m_should_execute_mem_commands) {
-		m_should_execute_mem_commands = false;
-		execute_memory_commands();
-	}
-
 	submit_fun(m_render_buffers[m_buffer_index]);
+
+	VkViewport viewport{
+		.x = 0,
+		.y = 0,
+		.width = (float)m_swapchain.extent().width,
+		.height = (float)m_swapchain.extent().height,
+		.minDepth = 0.0f,
+		.maxDepth = 1.0f
+	};
+	
+	VkRect2D scissor{
+		.offset = { 0, 0 },
+		.extent = { m_swapchain.extent().width, m_swapchain.extent().height }
+	};
+	
+	vkCmdSetViewport(m_render_buffers[m_buffer_index], 0, 1, &viewport);
+	vkCmdSetScissor(m_render_buffers[m_buffer_index], 0, 1, &scissor);
 }
 
 void VulkanContext::create_instance() {
@@ -154,8 +167,11 @@ void VulkanContext::create_instance() {
 void VulkanContext::create_debug_messenger() {
 	VkDebugUtilsMessengerCreateInfoEXT debug_messenger_info{
 		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-		.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-		.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+		.messageSeverity =
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+		.messageType = 
+			VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
 		.pfnUserCallback = debug_callback
 	};
 
@@ -273,22 +289,22 @@ void VulkanContext::begin_new_render_buffer() {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
-
+	
 	if (vkBeginCommandBuffer(m_render_buffers[m_buffer_index], &begin_info) != VK_SUCCESS)
 		throw std::runtime_error("Failed to begin command buffer");
-
+	
 	VkViewport viewport{
 		.x = 0,
 		.y = 0,
 		.width = (float)m_swapchain.extent().width,
 		.height = (float)m_swapchain.extent().height
 	};
-
+	
 	VkRect2D scissor{
 		.offset = { 0, 0 },
 		.extent = { m_swapchain.extent().width, m_swapchain.extent().height }
 	};
-
+	
 	vkCmdSetViewport(m_render_buffers[m_buffer_index], 0, 1, &viewport);
 	vkCmdSetScissor(m_render_buffers[m_buffer_index], 0, 1, &scissor);
 }
@@ -314,14 +330,11 @@ void VulkanContext::execute_memory_commands() {
 	vkWaitForFences(m_device->device(), 1, &m_mem_commands_fence, VK_TRUE, UINT64_MAX);
 
 	m_allocator.free_staging_buffers();
+
+	begin_memory_buffer();
 }
 
 void VulkanContext::execute_render_commands() {
-	if (m_should_execute_mem_commands) {
-		m_should_execute_mem_commands = false;
-		execute_memory_commands();
-	}
-
 	VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
 	std::array<VkSubmitInfo, 3> submit_infos{
@@ -459,6 +472,7 @@ void VulkanContext::begin_rendering() {
 	m_buffer_index = 0;
 
 	begin_new_render_buffer();
+	begin_memory_buffer();
 }
 
 void VulkanContext::end_rendering() {

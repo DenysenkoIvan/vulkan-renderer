@@ -37,12 +37,17 @@ void VulkanDevice::create_device(const VulkanPhysicalDevice& physical_device, co
 
 	uint32_t queue_count = (graphics_queue == present_queue ? 1 : 2);
 
+	VkPhysicalDeviceFeatures features{
+		.samplerAnisotropy = VK_TRUE
+	};
+
 	VkDeviceCreateInfo device_info{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.queueCreateInfoCount = queue_count,
 		.pQueueCreateInfos = queue_infos.data(),
 		.enabledExtensionCount = (uint32_t)extensions.size(),
-		.ppEnabledExtensionNames = extensions.data()
+		.ppEnabledExtensionNames = extensions.data(),
+		.pEnabledFeatures = &features
 	};
 
 	if (vkCreateDevice(physical_device.physical_device(), &device_info, nullptr, &m_device) != VK_SUCCESS)

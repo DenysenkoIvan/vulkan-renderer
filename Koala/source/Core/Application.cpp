@@ -20,10 +20,15 @@ Application::Application(const ApplicationProperties& props) {
 	};
 
 	float vertices[] = {
-		-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
-		 0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
-		-0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f,
-		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
+		-0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+		 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+		 0.0f,  0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+		-0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+		 0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+		 0.0f, -0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+		-0.5f, -0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
+		-0.5f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
+		 0.0f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
 	};
 
 	uint32_t indices1[] = {
@@ -31,12 +36,17 @@ Application::Application(const ApplicationProperties& props) {
 	};
 
 	uint32_t indices2[] = {
-		1, 2, 3
+		3, 4, 5
+	};
+
+	uint32_t indices3[] = {
+		6, 7, 8
 	};
 
 	m_vertex_buffer = VertexBuffer::create(vertices, sizeof(vertices), layout);
 	m_index_buffer1 = IndexBuffer::create(indices1, sizeof(indices1), IndexBuffer::Type::UInt32);
 	m_index_buffer2 = IndexBuffer::create(indices2, sizeof(indices2), IndexBuffer::Type::UInt32);
+	m_index_buffer3 = IndexBuffer::create(indices3, sizeof(indices3), IndexBuffer::Type::UInt32);
 }
 
 Application::~Application() {
@@ -85,14 +95,14 @@ void Application::on_update() {
 
 	float value = m_clear_value.color.float32[0];
 
-	float vertices[] = {
-		-0.5f, -0.5f, 0.0f, value, 0.0f, value,
-		 0.5f, -0.5f, 0.0f, value, 0.0f, value,
-		-0.5f,  0.5f, 0.0f, value, 0.0f, value,
-		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
-	};
+	//float vertices[] = {
+	//	-0.5f, -0.5f, 0.0f, value, 0.0f, value,
+	//	 0.5f, -0.5f, 0.0f, value, 0.0f, value,
+	//	-0.5f,  0.5f, 0.0f, value, 0.0f, value,
+	//	 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
+	//};
 
-	m_vertex_buffer->update(vertices, sizeof(vertices));
+	//m_vertex_buffer->update(vertices, sizeof(vertices));
 
 	m_clear_value.color.float32[0] += (delta * time_diff);
 	m_clear_value.color.float32[2] += (delta * time_diff);
@@ -117,12 +127,14 @@ void Application::on_update() {
 }
 
 void Application::on_render() {
+	m_renderer.begin_frame();
 	m_renderer.clear_screen(m_clear_value);
 	
 	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer1);
 	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer2);
+	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer3);
 	
-	m_renderer.display();
+	m_renderer.end_frame();
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_render();

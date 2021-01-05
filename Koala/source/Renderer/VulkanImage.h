@@ -15,6 +15,7 @@ public:
 	VkImageView view() const { return m_image_view; }
 	VkDeviceMemory memory() const { return m_image_memory; }
 	VkExtent2D extent() const { return m_extent; }
+	VkImageLayout layout() const { return m_layout; }
 
 	static void set_context(std::shared_ptr<VulkanContext> context);
 
@@ -22,6 +23,7 @@ private:
 	static std::shared_ptr<VulkanContext> s_context;
 
 	VkExtent2D m_extent;
+	VkImageLayout m_layout;
 
 	VkImage m_image;
 	VkImageView m_image_view;

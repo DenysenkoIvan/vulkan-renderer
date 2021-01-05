@@ -51,6 +51,7 @@ private:
 	std::shared_ptr<VertexBuffer> m_vertex_buffer;
 	std::shared_ptr<IndexBuffer> m_index_buffer1;
 	std::shared_ptr<IndexBuffer> m_index_buffer2;
+	std::shared_ptr<IndexBuffer> m_index_buffer3;
 	std::shared_ptr<Material> m_material;
 	VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };

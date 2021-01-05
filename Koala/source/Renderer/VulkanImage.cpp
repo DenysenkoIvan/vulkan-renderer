@@ -13,6 +13,7 @@ void VulkanImage::create(const void* data, uint32_t size, VkExtent2D extent, VkF
 	ImageAllocationInfo alloca_info = s_context->allocator().allocate_image(data, size, extent, format, usage, layout, aspect);
 
 	m_extent = extent;
+	m_layout = layout;
 
 	m_image = alloca_info.image;
 	m_image_memory = alloca_info.image_memory;
@@ -26,6 +27,7 @@ void VulkanImage::create(VkExtent2D extent, VkFormat format, VkImageUsageFlags u
 	ImageAllocationInfo alloca_info = s_context->allocator().allocate_empty_image(extent, format, usage, layout, aspect);
 
 	m_extent = extent;
+	m_layout = layout;
 
 	m_image = alloca_info.image;
 	m_image_memory = alloca_info.image_memory;
