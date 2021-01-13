@@ -29,7 +29,7 @@ public:
 	void on_update();
 
 	GLFWwindow* get_GLFWwindow() const { return m_window; }
-	std::shared_ptr<VulkanContext> context() const { return m_context; }
+	VulkanContext* context() const { return m_context.get(); }
 
 private:
 	void init_window(const WindowProperties& window_props);
@@ -44,5 +44,5 @@ private:
 	Event::event_handler_fn m_callback;
 	GLFWwindow* m_window = nullptr;
 
-	std::shared_ptr<VulkanContext> m_context;
+	std::unique_ptr<VulkanContext> m_context;
 };

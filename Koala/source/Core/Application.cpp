@@ -1,7 +1,11 @@
 #include "Application.h"
 
 #include <Renderer/VulkanContext.h>
-#include <Renderer/Buffer.h>
+
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <vector>
 
 Application::Application(const ApplicationProperties& props) {
 	WindowProperties window_props;
@@ -11,13 +15,6 @@ Application::Application(const ApplicationProperties& props) {
 	window_props.callback = ([this](Event& e) { this->on_event(e); });
 
 	m_window.initialize(window_props);
-
-	m_renderer.create(m_window.context());
-
-	BufferLayout layout = {
-			{ Shader::DataType::Float3, "in_position" },
-			{ Shader::DataType::Float3, "in_color" }
-	};
 
 	float vertices[] = {
 		-0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
@@ -43,14 +40,34 @@ Application::Application(const ApplicationProperties& props) {
 		6, 7, 8
 	};
 
-	m_vertex_buffer = VertexBuffer::create(vertices, sizeof(vertices), layout);
-	m_index_buffer1 = IndexBuffer::create(indices1, sizeof(indices1), IndexBuffer::Type::UInt32);
-	m_index_buffer2 = IndexBuffer::create(indices2, sizeof(indices2), IndexBuffer::Type::UInt32);
-	m_index_buffer3 = IndexBuffer::create(indices3, sizeof(indices3), IndexBuffer::Type::UInt32);
+	m_graphics_controller.create(m_window.context());
+
+	auto load_spv = [](const std::filesystem::path& path) -> std::vector<uint8_t> {
+		if (!std::filesystem::exists(path))
+			throw std::runtime_error("Shader doesn't exist");
+
+		size_t code_size = std::filesystem::file_size(path);
+		size_t zeros_count = (4 - (code_size % 4)) % 4;
+
+		std::vector<uint8_t> spv_code;
+		spv_code.reserve(code_size + zeros_count);
+
+		std::basic_ifstream<uint8_t> spv_file(path, std::ios::binary);
+
+		spv_code.insert(spv_code.end(), std::istreambuf_iterator<uint8_t>(spv_file), std::istreambuf_iterator<uint8_t>());
+		spv_code.insert(spv_code.end(), zeros_count, 0);
+
+		return spv_code;
+	};
+
+	m_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/vertex.spv"), load_spv("../assets/shaders/fragment.spv"));
+	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
+	m_index_buffer = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
 }
 
 Application::~Application() {
-	m_renderer.destroy();
+	m_graphics_controller.destroy();
+	//m_renderer.destroy();
 }
 
 void Application::on_event(Event& e) {
@@ -83,7 +100,8 @@ void Application::on_window_close(WindowCloseEvent& e) {
 }
 
 void Application::on_window_resize(WindowResizeEvent& e) {
-	m_renderer.on_resize(e.width(), e.height());
+	m_graphics_controller.resize(e.width(), e.height());
+	//m_renderer.on_resize(e.width(), e.height());
 }
 
 void Application::on_update() {
@@ -93,7 +111,7 @@ void Application::on_update() {
 
 	float time_diff = (float)(time_point - m_prev_time_point);
 
-	float value = m_clear_value.color.float32[0];
+	//float value = m_clear_value.color.float32[0];
 
 	//float vertices[] = {
 	//	-0.5f, -0.5f, 0.0f, value, 0.0f, value,
@@ -104,37 +122,40 @@ void Application::on_update() {
 
 	//m_vertex_buffer->update(vertices, sizeof(vertices));
 
-	m_clear_value.color.float32[0] += (delta * time_diff);
-	m_clear_value.color.float32[2] += (delta * time_diff);
-
-	if (m_clear_value.color.float32[0] >= 1.0f) {
-		m_clear_value.color.float32[0] = 1.0f;
-		m_clear_value.color.float32[2] = 1.0f;
-		delta = 0.5f;
-	} else if (m_clear_value.color.float32[0] <= 0) {
-		m_clear_value.color.float32[0] = 0.0f;
-		m_clear_value.color.float32[2] = 0.0f;
-		delta = -0.5f;
-	}
-
-	if (m_clear_value.color.float32[0] >= 1.0f || m_clear_value.color.float32[0] <= 0.0f)
-		delta = -delta;
-
-	m_prev_time_point = time_point;
+	//m_clear_value.color.float32[0] += (delta * time_diff);
+	//m_clear_value.color.float32[2] += (delta * time_diff);
+	//
+	//if (m_clear_value.color.float32[0] >= 1.0f) {
+	//	m_clear_value.color.float32[0] = 1.0f;
+	//	m_clear_value.color.float32[2] = 1.0f;
+	//	delta = 0.5f;
+	//} else if (m_clear_value.color.float32[0] <= 0) {
+	//	m_clear_value.color.float32[0] = 0.0f;
+	//	m_clear_value.color.float32[2] = 0.0f;
+	//	delta = -0.5f;
+	//}
+	//
+	//if (m_clear_value.color.float32[0] >= 1.0f || m_clear_value.color.float32[0] <= 0.0f)
+	//	delta = -delta;
+	//
+	//m_prev_time_point = time_point;
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
 }
 
 void Application::on_render() {
-	m_renderer.begin_frame();
-	m_renderer.clear_screen(m_clear_value);
-	
-	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer1);
-	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer2);
-	m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer3);
-	
-	m_renderer.end_frame();
+	//m_renderer.begin_frame();
+	//m_renderer.clear_screen(m_clear_value);
+	//
+	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer1);
+	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer2);
+	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer3);
+	//
+	//m_renderer.end_frame();
+
+	m_graphics_controller.begin_frame();
+	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_render();

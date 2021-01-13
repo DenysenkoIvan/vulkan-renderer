@@ -1,8 +1,5 @@
 #include <Koala.h>
 
-#include <Renderer/VulkanContext.h>
-#include <Renderer/Buffer.h>
-
 #include <fstream>
 #include <iostream>
 #include <istream>

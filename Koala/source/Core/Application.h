@@ -9,7 +9,7 @@
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
 
-#include <Renderer/Renderer.h>
+#include <Renderer/VulkanGraphicsController.h>
 
 int main(int argc, char** argv);
 
@@ -47,11 +47,15 @@ private:
 	bool m_running = true;
 	double m_prev_time_point = 0.0;
 
-	Renderer m_renderer;
-	std::shared_ptr<VertexBuffer> m_vertex_buffer;
-	std::shared_ptr<IndexBuffer> m_index_buffer1;
-	std::shared_ptr<IndexBuffer> m_index_buffer2;
-	std::shared_ptr<IndexBuffer> m_index_buffer3;
-	std::shared_ptr<Material> m_material;
-	VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
+	VulkanGraphicsController m_graphics_controller;
+	ShaderId m_shader;
+	BufferId m_vertex_buffer;
+	BufferId m_index_buffer;
+	//Renderer m_renderer;
+	//std::shared_ptr<VertexBuffer> m_vertex_buffer;
+	//std::shared_ptr<IndexBuffer> m_index_buffer1;
+	//std::shared_ptr<IndexBuffer> m_index_buffer2;
+	//std::shared_ptr<IndexBuffer> m_index_buffer3;
+	//std::shared_ptr<Material> m_material;
+	//VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };

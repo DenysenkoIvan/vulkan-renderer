@@ -1,97 +1,128 @@
 #pragma once
 
-#include "VulkanAllocator.h"
-#include "VulkanDevice.h"
-#include "VulkanPhysicalDevice.h"
-#include "VulkanSwapchain.h"
-
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include <functional>
-#include <optional>
-#include <stdexcept>
+#include <array>
+#include <memory>
+#include <vector>
+
+#ifndef NDEBUG
+#define VULKAN_DEBUG
+#endif
+
+static constexpr int FRAMES_IN_FLIGHT = 2;
 
 class VulkanContext {
 public:
 	void create(GLFWwindow* window);
-	~VulkanContext();
+	void destroy();
 
-	VulkanAllocator& allocator() { return m_allocator; }
-	const VulkanPhysicalDevice& physical_device() const { return *m_physical_device; }
-	const VulkanDevice& device() const { return *m_device; }
-	VulkanSwapchain& swapchain() { return m_swapchain; }
+	void resize(uint32_t widht, uint32_t height);
+	void swap_buffers();
 
-	void begin_frame();
-	void end_frame();
+	VkCommandBuffer memory_command_buffer() const { return m_frames[m_frame_index].memory_buffer; }
+	VkCommandBuffer draw_command_buffer() const { return m_frames[m_frame_index].draw_buffer; }
 
-	void submit_render_commands(const std::function<void(VkCommandBuffer)>& submit_fun);
+	void submit_staging_buffer(VkBuffer buffer, VkDeviceMemory memory);
 
-	void on_resize(uint32_t width, uint32_t height);
+	VkInstance instance() const { return m_instance; }
+	VkPhysicalDevice physical_device() const { return m_physical_device; }
+	VkDevice device() const { return m_device; }
+
+	const VkPhysicalDeviceProperties& physical_device_props() const { return m_gpu_info->properties; }
+	const VkPhysicalDeviceMemoryProperties physical_device_mem_props() const { return m_gpu_info->memory_properties; }
+
+	uint32_t image_index() const { return m_image_index; }
+	VkExtent2D swapchain_extent() const { return m_swapchain_extent; }
+	VkFormat swapchain_format() const { return m_surface_format.format; }
+	uint32_t swapchain_image_count() const { return (uint32_t)m_swapchain_images.size(); }
+	const std::vector<VkImageView>& swapchain_image_views() const { return m_swapchain_image_views; }
 
 private:
+	void init_extensions();
 	void create_instance();
+#ifdef VULKAN_DEBUG
 	void create_debug_messenger();
+#endif
 	void create_surface(GLFWwindow* window);
 	void pick_physical_device();
 	void create_device();
-	void create_allocator();
+	void create_swapchain();
 	void create_command_pool();
 	void allocate_command_buffers();
-	void create_sync_objects();
-	void begin_memory_buffer();
-	void begin_new_render_buffer();
-	void execute_memory_commands();
-	void execute_render_commands();
-
-	VkSubmitInfo submit_transition_to_attachment_layout();
-	VkSubmitInfo submit_render();
-	VkSubmitInfo submit_transition_to_present_layout();
-
-	void begin_rendering();
-	void end_rendering();
-
-	void destroy_debug_messenger();
-	void destroy_surface();
-	void destroy_swapchain();
-	void free_command_buffers();
-	void destroy_command_pool();
-	void destroy_sync_objects();
-
-	static const std::vector<const char*>& get_required_extensions();
-
+	void start_rendering();
+	void stop_rendering();
+	
+	void begin_buffers();
+	void end_buffers();
+	void submit_command_buffers();
+	void present_image();
+	
 	static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
 
 private:
-	VulkanAllocator m_allocator;
+	struct PhysicalDeviceInfo {
+		VkPhysicalDeviceProperties properties;
+		VkPhysicalDeviceMemoryProperties memory_properties;
+		VkPhysicalDeviceFeatures features;
+	};
 
-	VkInstance m_instance = VK_NULL_HANDLE;
+	struct StagingBuffer {
+		VkBuffer buffer;
+		VkDeviceMemory memory;
+	};
 
-	VkDebugUtilsMessengerEXT m_debug_messenger = VK_NULL_HANDLE;
-
-	VkSurfaceKHR m_surface = VK_NULL_HANDLE;
-
-	std::shared_ptr<VulkanPhysicalDevice> m_physical_device;
-	std::shared_ptr<VulkanDevice> m_device;
-
-	VulkanSwapchain m_swapchain;
+	struct Frame {
+		VkCommandBuffer memory_buffer;
+		VkCommandBuffer draw_buffer;
+		VkSemaphore image_acquired_semaphore;
+		VkSemaphore memory_complete_semaphore;
+		VkSemaphore draw_complete_semaphore;
+		VkFence draw_complete_fence;
+		std::vector<StagingBuffer> staging_buffers;
+	};
 	
-	bool m_should_execute_mem_commands = false;
-	const uint32_t m_buffer_count = 2;
-	uint32_t m_buffer_index = 0;
+	std::vector<const char*> m_instance_extensions;
+	std::vector<const char*> m_physical_device_extensions;
+
+	VkInstance m_instance;
+	
+#ifdef VULKAN_DEBUG
+	VkDebugUtilsMessengerEXT m_debug_messenger;
+#endif
+
+	VkSurfaceKHR m_surface;
+	
+	VkPhysicalDevice m_physical_device;
+	std::unique_ptr<PhysicalDeviceInfo> m_gpu_info;
+	
+	VkDevice m_device;
+	uint32_t m_graphics_queue_index;
+	uint32_t m_present_queue_index;
+	VkQueue m_graphics_queue;
+	VkQueue m_present_queue;
+
+	uint32_t m_image_index;
+	VkSwapchainKHR m_swapchain;
+	uint32_t m_image_count;
+	VkExtent2D m_swapchain_extent;
+	VkSurfaceFormatKHR m_surface_format;
+	VkPresentModeKHR m_present_mode;
+	std::vector<VkImage> m_swapchain_images;
+	std::vector<VkImageView> m_swapchain_image_views;
+
 	VkCommandPool m_command_pool;
-	VkCommandBuffer m_memory_buffer;
-	std::vector<VkCommandBuffer> m_render_buffers;
-	std::vector<VkCommandBuffer> m_image_to_attachment_layout_buffers;
-	std::vector<VkCommandBuffer> m_image_to_present_layout_buffers;
 	
-	bool m_should_resize = false;
+	uint32_t m_frame_index;
+	std::array<Frame, FRAMES_IN_FLIGHT> m_frames;
+	//std::array<VkCommandBuffer, FRAMES_IN_FLIGHT> m_memory_buffers;
+	//std::array<VkCommandBuffer, FRAMES_IN_FLIGHT> m_draw_buffers;
 
-	//uint32_t m_image_index = ~0;
-	VkFence m_mem_commands_fence = VK_NULL_HANDLE;
-	VkFence m_render_commands_fence = VK_NULL_HANDLE;
-	VkSemaphore m_image_available_semaphore = VK_NULL_HANDLE;
-	VkSemaphore m_attachment_ready_semaphore = VK_NULL_HANDLE;
-	VkSemaphore m_render_finished_semaphore = VK_NULL_HANDLE;
-	VkSemaphore m_presentation_ready_semaphore = VK_NULL_HANDLE;
+	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_image_acquired_semaphores;
+	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_memory_complete_semaphores;
+	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_draw_complete_semaphores;
+	//std::array<VkFence, FRAMES_IN_FLIGHT> m_draw_complete_fences;
+	std::vector<VkFence> m_images_in_flight_fences;
 };

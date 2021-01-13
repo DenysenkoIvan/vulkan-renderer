@@ -8,5 +8,4 @@
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
 
-#include <Renderer/Buffer.h>
-#include <Renderer/Shader.h>
+// TODO: Include Render header

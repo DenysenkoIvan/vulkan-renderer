@@ -3,6 +3,9 @@
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
 
+// TODO: Refactor
+#include <Renderer/VulkanContext.h>
+
 int Window::s_windows_created_count = 0;
 
 Window::~Window() {
@@ -27,7 +30,8 @@ void Window::initialize(const WindowProperties& window_props) {
 
 	init_window(window_props);
 
-	m_context = std::make_shared<VulkanContext>();
+	// TODO: Refactor
+	m_context = std::make_unique<VulkanContext>();
 	m_context->create(m_window);
 }
 
