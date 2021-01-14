@@ -61,6 +61,20 @@ Application::Application(const ApplicationProperties& props) {
 	};
 
 	m_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/vertex.spv"), load_spv("../assets/shaders/fragment.spv"));
+
+	PipelineInfo pipeline_info{};
+	pipeline_info.shader = m_shader;
+	pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
+	pipeline_info.assembly.restart_enable = false;
+	pipeline_info.raster.depth_clamp_enable = false;
+	pipeline_info.raster.rasterizer_discard_enable = false;
+	pipeline_info.raster.polygon_mode = PolygonMode::Fill;
+	pipeline_info.raster.cull_mode = CullMode::None;
+	pipeline_info.raster.depth_bias_enable = false;
+	pipeline_info.raster.line_width = 1.0f;
+
+	m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
+
 	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
 	m_index_buffer = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
 }

@@ -49,6 +49,7 @@ private:
 
 	VulkanGraphicsController m_graphics_controller;
 	ShaderId m_shader;
+	PipelineId m_pipeline;
 	BufferId m_vertex_buffer;
 	BufferId m_index_buffer;
 	//Renderer m_renderer;

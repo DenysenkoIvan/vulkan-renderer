@@ -49,7 +49,7 @@ void VulkanGraphicsController::create(VulkanContext* context) {
 		.pDependencies = &dependency
 	};
 
-	vkCreateRenderPass(m_context->device(), &render_pass_info, nullptr, &m_clear_render_pass);
+	vkCreateRenderPass(m_context->device(), &render_pass_info, nullptr, &m_default_render_pass);
 
 	create_framebuffer();
 }
@@ -73,8 +73,8 @@ void VulkanGraphicsController::begin_frame() {
 	
 	VkRenderPassBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-		.renderPass = m_clear_render_pass,
-		.framebuffer = m_clear_framebuffers[m_context->image_index()],
+		.renderPass = m_default_render_pass,
+		.framebuffer = m_default_framebuffers[m_context->image_index()],
 		.renderArea = {.extent = m_context->swapchain_extent() },
 		.clearValueCount = 1,
 		.pClearValues = &clear_value
@@ -200,16 +200,16 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 		throw std::runtime_error("Failed to create Vertex stage VkShaderModule");
 
 	// Create Vertex stage VkPipelineShaderStageCreateInfo
-	shader.vertex_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shader.vertex_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
-	shader.vertex_create_info.module = shader.info->vertex_module;
-	shader.vertex_create_info.pName = shader.info->vertex_entry.c_str();
+	shader.stage_create_infos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shader.stage_create_infos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	shader.stage_create_infos[0].module = shader.info->vertex_module;
+	shader.stage_create_infos[0].pName = shader.info->vertex_entry.c_str();
 
 	// Create Fragment stage VkPipelineShaderStageCreateInfo
-	shader.fragment_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shader.fragment_create_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	shader.fragment_create_info.module = shader.info->fragment_module;
-	shader.fragment_create_info.pName = shader.info->fragment_entry.c_str();
+	shader.stage_create_infos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shader.stage_create_infos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	shader.stage_create_infos[1].module = shader.info->fragment_module;
+	shader.stage_create_infos[1].pName = shader.info->fragment_entry.c_str();
 
 	// Create VkPipelineVertexInputStateCreateInfo
 	shader.vertex_input_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -257,6 +257,118 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 		throw std::runtime_error("Failed to create pipelien layout");
 
 	return (ShaderId)m_shaders.size() - 1;
+}
+
+PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipeline_info) {
+	m_pipelines.push_back({});
+	Pipeline& pipeline = m_pipelines.back();
+	pipeline.info = *pipeline_info;
+
+	const Shader& shader = m_shaders[pipeline.info.shader];
+
+	VkPipelineInputAssemblyStateCreateInfo assembly_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = (VkPrimitiveTopology)pipeline_info->assembly.topology,
+		.primitiveRestartEnable = pipeline_info->assembly.restart_enable
+	};
+
+	VkViewport viewport{
+		.x = 0,
+		.y = 0,
+		.width = (float)m_context->swapchain_extent().width,
+		.height = (float)m_context->swapchain_extent().height,
+		.minDepth = 0.0f,
+		.maxDepth = 1.0f
+	};
+
+	VkRect2D scissor{
+		.offset = { 0, 0 },
+		.extent = m_context->swapchain_extent()
+	};
+
+	VkPipelineViewportStateCreateInfo viewport_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		.viewportCount = 1,
+		.pViewports = &viewport,
+		.scissorCount = 1,
+		.pScissors = &scissor
+	};
+
+	VkPipelineRasterizationStateCreateInfo rasterization_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.depthClampEnable = pipeline_info->raster.depth_clamp_enable,
+		.rasterizerDiscardEnable = pipeline_info->raster.rasterizer_discard_enable,
+		.polygonMode = (VkPolygonMode)pipeline_info->raster.polygon_mode,
+		.cullMode = (VkCullModeFlags)pipeline_info->raster.cull_mode,
+		.frontFace = (VkFrontFace)pipeline_info->raster.front_face,
+		.depthBiasEnable = pipeline_info->raster.depth_bias_enable,
+		.depthBiasConstantFactor = pipeline_info->raster.depth_bias_constant_factor,
+		.depthBiasClamp = pipeline_info->raster.depth_bias_clamp,
+		.depthBiasSlopeFactor =  pipeline_info->raster.detpth_bias_slope_factor,
+		.lineWidth = pipeline_info->raster.line_width
+	};
+
+	VkPipelineMultisampleStateCreateInfo multisample_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+		.sampleShadingEnable = VK_FALSE
+	};
+
+	// TODO: Depth Test
+	VkPipelineDepthStencilStateCreateInfo depth_stencil_state{
+		.depthTestEnable = VK_FALSE,
+		.depthWriteEnable = VK_FALSE,
+		.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthBoundsTestEnable = VK_FALSE,
+		.stencilTestEnable = VK_FALSE
+	};
+	
+	VkPipelineColorBlendAttachmentState blend_attachment{
+		.blendEnable = VK_FALSE,
+		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+	};
+
+	VkPipelineColorBlendStateCreateInfo color_blend_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.logicOpEnable = VK_FALSE,
+		.logicOp = VK_LOGIC_OP_COPY,
+		.attachmentCount = 1,
+		.pAttachments = &blend_attachment,
+		.blendConstants = { 0, 0, 0, 0 }
+	};
+
+	std::array<VkDynamicState, 2> dynamic_states{
+		VK_DYNAMIC_STATE_VIEWPORT , VK_DYNAMIC_STATE_SCISSOR 
+	};
+
+	VkPipelineDynamicStateCreateInfo dynamic_state{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+		.dynamicStateCount = (uint32_t)dynamic_states.size(),
+		.pDynamicStates = dynamic_states.data()
+	};
+
+	VkGraphicsPipelineCreateInfo pipeline_create_info{
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.stageCount = (uint32_t)shader.stage_create_infos.size(),
+		.pStages = shader.stage_create_infos.data(),
+		.pVertexInputState = &shader.vertex_input_create_info,
+		.pInputAssemblyState = &assembly_state,
+		.pTessellationState = nullptr,
+		.pViewportState = &viewport_state,
+		.pRasterizationState = &rasterization_state,
+		.pMultisampleState = &multisample_state,
+		.pDepthStencilState = &depth_stencil_state,
+		.pColorBlendState = &color_blend_state,
+		.pDynamicState = &dynamic_state,
+		.layout = shader.pipeline_layout,
+		.renderPass = m_default_render_pass,
+		.subpass = 0
+	};
+	
+	if (vkCreateGraphicsPipelines(m_context->device(), VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline.pipeline) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create graphics pipeline");
+
+	return (PipelineId)m_pipelines.size() - 1;
 }
 
 BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t size) {
@@ -364,11 +476,11 @@ uint32_t VulkanGraphicsController::find_memory_type(uint32_t type_filter, VkMemo
 
 void VulkanGraphicsController::create_framebuffer() {
 	uint32_t framebuffer_count = m_context->swapchain_image_count();
-	m_clear_framebuffers.resize(framebuffer_count);
+	m_default_framebuffers.resize(framebuffer_count);
 
 	VkFramebufferCreateInfo framebuffer_info{
 		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-		.renderPass = m_clear_render_pass,
+		.renderPass = m_default_render_pass,
 		.attachmentCount = 1,
 		.width = m_context->swapchain_extent().width,
 		.height = m_context->swapchain_extent().height,
@@ -380,13 +492,13 @@ void VulkanGraphicsController::create_framebuffer() {
 
 		framebuffer_info.pAttachments = &view;
 
-		vkCreateFramebuffer(m_context->device(), &framebuffer_info, nullptr, &m_clear_framebuffers[i]);
+		vkCreateFramebuffer(m_context->device(), &framebuffer_info, nullptr, &m_default_framebuffers[i]);
 	}
 }
 
 void VulkanGraphicsController::destroy_framebuffer() {
-	for (VkFramebuffer framebuffer : m_clear_framebuffers)
+	for (VkFramebuffer framebuffer : m_default_framebuffers)
 		vkDestroyFramebuffer(m_context->device(), framebuffer, nullptr);
 
-	m_clear_framebuffers.clear();
+	m_default_framebuffers.clear();
 }
