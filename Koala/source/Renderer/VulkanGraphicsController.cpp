@@ -404,6 +404,22 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 	return (BufferId)m_buffers.size() - 1;
 }
 
+BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_t size) {
+	Buffer buffer{
+		.size = size,
+		.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+	};
+
+	buffer.buffer = buffer_create(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
+	buffer.memory = memory_buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	buffer_copy(data, size, buffer.buffer);
+
+	m_buffers.push_back(buffer);
+
+	return (BufferId)m_buffers.size() - 1;
+}
+
 
 
 

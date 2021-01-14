@@ -95,6 +95,7 @@ public:
 
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
+	BufferId uniform_buffer_create(const void* data, size_t size);
 	//UniformSetId create_uniform_set(const std::vector<Uniform>& uniforms);
 	//BufferId create_index_buffer();
 	//BufferId create_uniform_buffer();
@@ -156,6 +157,10 @@ private:
 		VkIndexType index_type;
 	};
 
+	struct UniformBuffer {
+
+	};
+
 	struct Buffer {
 		VkBuffer buffer;
 		VkDeviceSize size;
@@ -164,6 +169,7 @@ private:
 		union {
 			VertexBuffer vertex;
 			IndexBuffer index;
+			UniformBuffer uniform;
 		};
 	};
 
