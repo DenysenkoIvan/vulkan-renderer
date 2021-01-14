@@ -5,6 +5,17 @@
 #include <algorithm>
 #include <stdexcept>
 
+static uint32_t vk_format_to_size(VkFormat format) {
+	switch (format) {
+	case VK_FORMAT_R32_SFLOAT:			return 1 * 4;
+	case VK_FORMAT_R32G32_SFLOAT:		return 2 * 4;
+	case VK_FORMAT_R32G32B32_SFLOAT:	return 3 * 4;
+	case VK_FORMAT_R32G32B32A32_SFLOAT: return 4 * 4;
+	}
+
+	throw std::runtime_error("Unknown format");
+}
+
 void VulkanGraphicsController::create(VulkanContext* context) {
 	m_context = context;
 
@@ -67,10 +78,21 @@ void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
 }
 
 void VulkanGraphicsController::begin_frame() {
+	m_draw_calls.clear();
+}
+
+void VulkanGraphicsController::submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets) {
+	// TODO: Add support for uniform sets
+	m_draw_calls.emplace_back(pipeline_id, vertex_id, index_id, uniform_sets);
+}
+
+void VulkanGraphicsController::end_frame() {
+	VkCommandBuffer draw_buffer = m_context->draw_command_buffer();
+
 	VkClearValue clear_value;
 	clear_value.color = { 1.0f, 0.0f, 1.0f, 1.0f };
 	clear_value.depthStencil = { 1.0f, 0 };
-	
+
 	VkRenderPassBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = m_default_render_pass,
@@ -79,14 +101,37 @@ void VulkanGraphicsController::begin_frame() {
 		.clearValueCount = 1,
 		.pClearValues = &clear_value
 	};
-	
-	VkCommandBuffer draw_buffer = m_context->draw_command_buffer();
 
 	vkCmdBeginRenderPass(draw_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdEndRenderPass(draw_buffer);
-}
+	
+	VkViewport viewport{
+		.x = 0,
+		.y = 0,
+		.width = (float)m_context->swapchain_extent().width,
+		.height = (float)m_context->swapchain_extent().height,
+		.minDepth = 0.0f,
+		.maxDepth = 1.0f
+	};
 
-void VulkanGraphicsController::end_frame() {
+	VkRect2D scissor{
+		.offset = { 0, 0 },
+		.extent = m_context->swapchain_extent()
+	};
+
+	vkCmdSetViewport(draw_buffer, 0, 1, &viewport);
+	vkCmdSetScissor(draw_buffer, 0, 1, &scissor);
+
+	for (DrawCall& draw_call : m_draw_calls) {
+		vkCmdBindPipeline(draw_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[draw_call.pipeline].pipeline);
+		VkBuffer vertex_buffers[1] = { m_buffers[draw_call.vertex_buffer].buffer };
+		VkDeviceSize offsets[1] = { 0 };
+		vkCmdBindVertexBuffers(draw_buffer, 0, 1, vertex_buffers, offsets);
+		vkCmdBindIndexBuffer(draw_buffer, m_buffers[draw_call.index_buffer].buffer, 0, m_buffers[draw_call.index_buffer].index.index_type);
+		vkCmdDrawIndexed(draw_buffer, m_buffers[draw_call.index_buffer].index.index_count, 1, 0, 0, 0);
+	}
+
+	vkCmdEndRenderPass(draw_buffer);
+	
 	m_context->swap_buffers();
 }
 
@@ -123,7 +168,7 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 					.offset = stride
 				};
 				
-				stride += input_var->array.stride;
+				stride += vk_format_to_size((VkFormat)input_var->format);
 
 				shader.info->attribute_descriptions.push_back(attribute_description);
 			}
@@ -393,6 +438,7 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 		.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT
 	};
 	buffer.index.index_type = (VkIndexType)index_type;
+	buffer.index.index_count = index_type == IndexType::Uint16 ? (uint32_t)size / 2 : (uint32_t)size / 4;
 
 	buffer.buffer = buffer_create(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
 	buffer.memory = memory_buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);

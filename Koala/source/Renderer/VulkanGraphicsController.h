@@ -3,6 +3,7 @@
 #include "VulkanContext.h"
 
 #include <string>
+#include <vector>
 
 using RenderId = uint32_t;
 using BufferId = uint32_t;
@@ -84,15 +85,13 @@ public:
 	void resize(uint32_t width, uint32_t height);
 	
 	void begin_frame();
+
+	void submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets);
+
 	void end_frame();
 
-	//void submit_geometry(BufferId vertex_buffer, BufferId index_buffer);
-
-
-	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);
-	
+	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);	
 	PipelineId pipeline_create(const PipelineInfo* pipeline_info);
-
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
 	BufferId uniform_buffer_create(const void* data, size_t size);
@@ -155,6 +154,7 @@ private:
 
 	struct IndexBuffer {
 		VkIndexType index_type;
+		uint32_t index_count;
 	};
 
 	struct UniformBuffer {
@@ -173,11 +173,20 @@ private:
 		};
 	};
 
+	struct DrawCall {
+		PipelineId pipeline;
+		BufferId vertex_buffer;
+		BufferId index_buffer;
+		std::vector<UniformSetId> uniform_sets;
+	};
+
 	VulkanContext* m_context;
 
 	std::vector<Shader> m_shaders;
 	std::vector<Pipeline> m_pipelines;
 	std::vector<Buffer> m_buffers;
+
+	std::vector<DrawCall> m_draw_calls;
 
 	// TODO: Delete these lines
 	VkRenderPass m_default_render_pass;

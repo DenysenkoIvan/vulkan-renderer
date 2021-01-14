@@ -169,6 +169,7 @@ void Application::on_render() {
 	//m_renderer.end_frame();
 
 	m_graphics_controller.begin_frame();
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, {});
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)
