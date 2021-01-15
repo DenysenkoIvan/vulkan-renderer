@@ -76,7 +76,9 @@ Application::Application(const ApplicationProperties& props) {
 	m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
 
 	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
-	m_index_buffer = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
+	m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
+	m_index_buffer2 = m_graphics_controller.index_buffer_create(indices2, sizeof(indices2), IndexType::Uint32);
+	m_index_buffer3 = m_graphics_controller.index_buffer_create(indices3, sizeof(indices3), IndexType::Uint32);
 }
 
 Application::~Application() {
@@ -169,7 +171,9 @@ void Application::on_render() {
 	//m_renderer.end_frame();
 
 	m_graphics_controller.begin_frame();
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, {});
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer1, {});
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, {});
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, {});
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)

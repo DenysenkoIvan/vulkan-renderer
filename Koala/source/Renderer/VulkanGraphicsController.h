@@ -101,12 +101,20 @@ public:
 
 private:
 	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
-	VkDeviceMemory memory_buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
+	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
 
 	void buffer_copy(const void* data, VkDeviceSize size, VkBuffer buffer);
 	
+	VkImage image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
+	VkDeviceMemory image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
+	VkImageView image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
+
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
+	void find_depth_format();
+	void create_depth_resources();
+	void destroy_depth_resources();
+	void create_render_pass();
 	void create_framebuffer();
 	void destroy_framebuffer();
 
@@ -146,6 +154,14 @@ private:
 	struct Pipeline {
 		PipelineInfo info;
 		VkPipeline pipeline;
+	};
+
+	struct Image {
+		VkImage image;
+		VkImageView view;
+		VkDeviceMemory memory;
+		VkImageUsageFlags usage;
+		VkExtent2D extent;
 	};
 
 	struct VertexBuffer {
@@ -189,6 +205,8 @@ private:
 	std::vector<DrawCall> m_draw_calls;
 
 	// TODO: Delete these lines
+	VkFormat m_depth_format;
+	std::vector<Image> m_depth_images;
 	VkRenderPass m_default_render_pass;
 	std::vector<VkFramebuffer> m_default_framebuffers;
 	// Delete down here
