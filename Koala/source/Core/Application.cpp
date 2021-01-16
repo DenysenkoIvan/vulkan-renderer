@@ -1,6 +1,7 @@
 #include "Application.h"
 
 #include <Renderer/VulkanContext.h>
+#include <stb_image/stb_image.h>
 
 #include <filesystem>
 #include <fstream>
@@ -79,6 +80,14 @@ Application::Application(const ApplicationProperties& props) {
 	m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
 	m_index_buffer2 = m_graphics_controller.index_buffer_create(indices2, sizeof(indices2), IndexType::Uint32);
 	m_index_buffer3 = m_graphics_controller.index_buffer_create(indices3, sizeof(indices3), IndexType::Uint32);
+	
+	int width = 0, height = 0, channels = 0;
+	stbi_uc* pixels = stbi_load("../assets/models/viking_room.png", &width, &height, &channels, STBI_rgb_alpha);
+	
+	if (!pixels)
+		throw std::runtime_error("Failed to load image");
+	
+	m_texture = m_graphics_controller.texture_create(pixels, width, height);
 }
 
 Application::~Application() {

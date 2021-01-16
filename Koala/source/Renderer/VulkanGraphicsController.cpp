@@ -16,6 +16,63 @@ static uint32_t vk_format_to_size(VkFormat format) {
 	throw std::runtime_error("Unknown format");
 }
 
+static VkAccessFlags get_access_flags(VkImageLayout layout) {
+	switch (layout) {
+	case VK_IMAGE_LAYOUT_UNDEFINED:
+		return 0;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		return
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_WRITE_BIT |
+			VK_ACCESS_HOST_READ_BIT;
+	//case VK_IMAGE_LAYOUT_PREINITIALIZED:
+	//	return VK_ACCESS_HOST_WRITE_BIT;
+	case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+		return
+			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+		return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+		return VK_ACCESS_TRANSFER_READ_BIT;
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		return VK_ACCESS_TRANSFER_WRITE_BIT;
+	case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+		return 0;
+	}
+
+	throw std::runtime_error("Image layout not supported");
+}
+
+static VkPipelineStageFlags get_pipeline_stage_flags(VkImageLayout layout) {
+	switch (layout) {
+	case VK_IMAGE_LAYOUT_UNDEFINED:
+		return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	case VK_IMAGE_LAYOUT_GENERAL:
+		return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	case VK_IMAGE_LAYOUT_PREINITIALIZED:
+		return VK_PIPELINE_STAGE_HOST_BIT;
+	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+		return VK_PIPELINE_STAGE_TRANSFER_BIT;
+	case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+		return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+		return
+			// TODO: Features not enabled
+			//VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT |
+			//VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT |
+			//VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT |
+			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+		return VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+	}
+
+	throw std::runtime_error("Image layout not supported");
+}
+
 void VulkanGraphicsController::create(VulkanContext* context) {
 	m_context = context;
 
@@ -29,9 +86,44 @@ void VulkanGraphicsController::create(VulkanContext* context) {
 }
 
 void VulkanGraphicsController::destroy() {
+	
+
+	VkDevice device = m_context->device();
+
 	destroy_framebuffer();
-	vkDestroyRenderPass(m_context->device(), m_default_render_pass, nullptr);
+	vkDestroyRenderPass(device, m_default_render_pass, nullptr);
 	destroy_depth_resources();
+
+	for (Buffer& buffer : m_buffers) {
+		vkFreeMemory(device, buffer.memory, nullptr);
+		vkDestroyBuffer(device, buffer.buffer, nullptr);
+	}
+	m_buffers.clear();
+
+	for (Image& image : m_images) {
+		vkDestroyImageView(device, image.view, nullptr);
+		vkDestroyImage(device, image.image, nullptr);
+		vkFreeMemory(device, image.memory, nullptr);
+	}
+	m_buffers.clear();
+
+	for (Shader& shader : m_shaders) {
+		ShaderInfo& info = *shader.info;
+
+		for (VkDescriptorSetLayout set_layout : info.set_layouts)
+			vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
+
+		vkDestroyShaderModule(device, info.vertex_module, nullptr);
+		vkDestroyShaderModule(device, info.fragment_module, nullptr);
+
+		vkDestroyPipelineLayout(device, shader.pipeline_layout, nullptr);
+	}
+	m_shaders.clear();
+
+	for (Pipeline& pipeline : m_pipelines) {
+		vkDestroyPipeline(device, pipeline.pipeline, nullptr);
+	}
+	m_pipelines.clear();
 }
 
 void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
@@ -328,7 +420,6 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.sampleShadingEnable = VK_FALSE
 	};
 
-	// TODO: Depth Test
 	VkPipelineDepthStencilStateCreateInfo depth_stencil_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
@@ -395,7 +486,7 @@ BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t
 	buffer.buffer = buffer_create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
 	buffer.memory = buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	buffer_copy(data, size, buffer.buffer);
+	buffer_copy(buffer.buffer, data, size);
 
 	m_buffers.push_back(buffer);
 
@@ -413,7 +504,7 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 	buffer.buffer = buffer_create(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
 	buffer.memory = buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	buffer_copy(data, size, buffer.buffer);
+	buffer_copy(buffer.buffer, data, size);
 
 	m_buffers.push_back(buffer);
 
@@ -429,11 +520,36 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 	buffer.buffer = buffer_create(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
 	buffer.memory = buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	buffer_copy(data, size, buffer.buffer);
+	buffer_copy(buffer.buffer, data, size);
 
 	m_buffers.push_back(buffer);
 
 	return (BufferId)m_buffers.size() - 1;
+}
+
+TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t width, uint32_t height) {
+	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
+	VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
+	Image image{
+		.image = image_create({ width, height }, format, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT),
+		.memory = image_allocate(image.image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+		.view = image_view_create(image.image, format, aspect),
+		.extent = { width, height },
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT
+	};
+
+	VkDeviceSize size = width * height * 4;
+
+	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+	image_copy(image.image, { width, height }, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
+
+	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	m_images.push_back(image);
+
+	return (TextureId)m_images.size() - 1;
 }
 
 
@@ -474,7 +590,7 @@ VkDeviceMemory VulkanGraphicsController::buffer_allocate(VkBuffer buffer, VkMemo
 	return memory;
 }
 
-void VulkanGraphicsController::buffer_copy(const void* data, VkDeviceSize size, VkBuffer buffer) {
+void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size) {
 	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
 	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
@@ -561,6 +677,51 @@ VkImageView VulkanGraphicsController::image_view_create(VkImage image, VkFormat 
 		throw std::runtime_error("Failed to create image view");
 
 	return image_view;
+}
+
+void VulkanGraphicsController::image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size) {
+	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
+	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+	void* staging_data = nullptr;
+	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
+	memcpy(staging_data, data, size);
+	vkUnmapMemory(m_context->device(), staging_memory);
+
+	VkCommandBuffer com_buffer = m_context->memory_command_buffer();
+
+	VkBufferImageCopy region{
+		.imageSubresource = { aspect, 0, 0, 1 },
+		.imageExtent = { extent.width, extent.height, 1 }
+	};
+
+	vkCmdCopyBufferToImage(com_buffer, staging_buffer, image, layout, 1, &region);
+
+	m_context->submit_staging_buffer(staging_buffer, staging_memory);
+}
+
+void VulkanGraphicsController::transition_image_layout(VkImage image, VkFormat, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
+	VkCommandBuffer com_buffer = m_context->memory_command_buffer();
+
+	VkImageMemoryBarrier barrier{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = get_access_flags(old_layout),
+		.dstAccessMask = get_access_flags(new_layout),
+		.oldLayout = old_layout,
+		.newLayout = new_layout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = image,
+		.subresourceRange = { aspect, 0, 1, 0, 1 }
+	};
+
+	vkCmdPipelineBarrier(com_buffer,
+		get_pipeline_stage_flags(old_layout), get_pipeline_stage_flags(new_layout),
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier
+	);
 }
 
 void VulkanGraphicsController::find_depth_format() {

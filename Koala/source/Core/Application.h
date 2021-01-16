@@ -54,5 +54,6 @@ private:
 	BufferId m_index_buffer1;
 	BufferId m_index_buffer2;
 	BufferId m_index_buffer3;
+	TextureId m_texture;
 	//VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };

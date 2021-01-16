@@ -565,18 +565,16 @@ void VulkanContext::stop_rendering() {
 	for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
 		vkResetCommandBuffer(m_frames[i].memory_buffer, 0);
 		vkResetCommandBuffer(m_frames[i].draw_buffer, 0);
-	}
 
-	for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-		vkDestroySemaphore(m_device, m_frames[m_frame_index].image_acquired_semaphore, nullptr);
-		vkDestroySemaphore(m_device, m_frames[m_frame_index].memory_complete_semaphore, nullptr);
-		vkDestroySemaphore(m_device, m_frames[m_frame_index].draw_complete_semaphore, nullptr);
-		vkDestroyFence(m_device, m_frames[m_frame_index].draw_complete_fence, nullptr);
-		
-		m_frames[m_frame_index].image_acquired_semaphore = VK_NULL_HANDLE;
-		m_frames[m_frame_index].memory_complete_semaphore = VK_NULL_HANDLE;
-		m_frames[m_frame_index].draw_complete_semaphore = VK_NULL_HANDLE;
-		m_frames[m_frame_index].draw_complete_fence = VK_NULL_HANDLE;
+		vkDestroySemaphore(m_device, m_frames[i].image_acquired_semaphore, nullptr);
+		vkDestroySemaphore(m_device, m_frames[i].memory_complete_semaphore, nullptr);
+		vkDestroySemaphore(m_device, m_frames[i].draw_complete_semaphore, nullptr);
+		vkDestroyFence(m_device, m_frames[i].draw_complete_fence, nullptr);
+
+		m_frames[i].image_acquired_semaphore = VK_NULL_HANDLE;
+		m_frames[i].memory_complete_semaphore = VK_NULL_HANDLE;
+		m_frames[i].draw_complete_semaphore = VK_NULL_HANDLE;
+		m_frames[i].draw_complete_fence = VK_NULL_HANDLE;
 	}
 	m_images_in_flight_fences.clear();
 }

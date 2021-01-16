@@ -9,6 +9,7 @@ using RenderId = uint32_t;
 using BufferId = uint32_t;
 using ShaderId = uint32_t;
 using PipelineId = uint32_t;
+using TextureId = uint32_t;
 using UniformSetId = uint32_t;
 
 enum class PrimitiveTopology {
@@ -95,19 +96,25 @@ public:
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
 	BufferId uniform_buffer_create(const void* data, size_t size);
+
+	TextureId texture_create(const void* data, uint32_t width, uint32_t height);
+
 	//UniformSetId create_uniform_set(const std::vector<Uniform>& uniforms);
 	//BufferId create_index_buffer();
 	//BufferId create_uniform_buffer();
 
 private:
+	// Buffers
 	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
 	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
-
-	void buffer_copy(const void* data, VkDeviceSize size, VkBuffer buffer);
+	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
 	
+	// Images
 	VkImage image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
 	VkDeviceMemory image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
 	VkImageView image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
+	void image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size);
+	void transition_image_layout(VkImage image, VkFormat, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
@@ -158,10 +165,10 @@ private:
 
 	struct Image {
 		VkImage image;
-		VkImageView view;
 		VkDeviceMemory memory;
-		VkImageUsageFlags usage;
+		VkImageView view;
 		VkExtent2D extent;
+		VkImageUsageFlags usage;
 	};
 
 	struct VertexBuffer {
@@ -201,6 +208,7 @@ private:
 	std::vector<Shader> m_shaders;
 	std::vector<Pipeline> m_pipelines;
 	std::vector<Buffer> m_buffers;
+	std::vector<Image> m_images;
 
 	std::vector<DrawCall> m_draw_calls;
 

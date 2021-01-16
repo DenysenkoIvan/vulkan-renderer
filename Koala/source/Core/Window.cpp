@@ -14,6 +14,10 @@ Window::~Window() {
 	s_windows_created_count--;
 	if (s_windows_created_count == 0)
 		terminate_glfw();
+
+	m_context->destroy();
+
+	m_context.release();
 }
 
 bool Window::is_minimized() {
