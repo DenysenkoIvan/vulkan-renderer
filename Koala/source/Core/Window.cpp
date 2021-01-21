@@ -20,6 +20,16 @@ Window::~Window() {
 	m_context.release();
 }
 
+int Window::width() {
+	glfwGetWindowSize(m_window, &m_width, &m_height);
+	return m_width;
+}
+
+int Window::height() {
+	glfwGetWindowSize(m_window, &m_width, &m_height);
+	return m_height;
+}
+
 bool Window::is_minimized() {
 	int minimized = glfwGetWindowAttrib(m_window, GLFW_ICONIFIED);
 
@@ -44,8 +54,11 @@ void Window::on_update() {
 }
 
 void Window::init_window(const WindowProperties& window_props) {
+	m_width = window_props.width;
+	m_height = window_props.height;
+
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	m_window = glfwCreateWindow(window_props.width, window_props.height, window_props.title.data(), nullptr, nullptr);
+	m_window = glfwCreateWindow(m_width, m_height, window_props.title.data(), nullptr, nullptr);
 	if (!m_window)
 		throw std::runtime_error("Failed to create a window");
 
@@ -67,6 +80,9 @@ void Window::init_window(const WindowProperties& window_props) {
 
 		if (glfwGetWindowAttrib(window, GLFW_ICONIFIED))
 			return;
+
+		//this->m_width = width;
+		//this->m_height = height;
 
 		WindowResizeEvent e(width, height);
 		callback(e);

@@ -188,6 +188,18 @@ void VulkanGraphicsController::end_frame() {
 		VkDeviceSize offsets[1] = { 0 };
 		vkCmdBindVertexBuffers(draw_buffer, 0, 1, vertex_buffers, offsets);
 		vkCmdBindIndexBuffer(draw_buffer, m_buffers[draw_call.index_buffer].buffer, 0, m_buffers[draw_call.index_buffer].index.index_type);
+		for (UniformSetId set_id : draw_call.uniform_sets) {
+			
+
+			vkCmdBindDescriptorSets(
+				draw_buffer,
+				VK_PIPELINE_BIND_POINT_GRAPHICS,
+				m_shaders[m_pipelines[draw_call.pipeline].info.shader].pipeline_layout,
+				0,
+				1,
+				&m_uniform_sets[set_id].descriptor_set,
+				0, nullptr);
+		}
 		vkCmdDrawIndexed(draw_buffer, m_buffers[draw_call.index_buffer].index.index_count, 1, 0, 0, 0);
 	}
 
@@ -552,6 +564,111 @@ TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t wi
 	return (TextureId)m_images.size() - 1;
 }
 
+UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms) {
+	Set& set = *m_shaders[shader_id].info->find_set(set_idx);
+
+	std::vector<std::vector<VkDescriptorImageInfo>> image_infos_collector;
+	std::vector<std::vector<VkDescriptorBufferInfo>> buffer_infos_collector;
+	std::vector<VkWriteDescriptorSet> writes;
+
+	DescriptorPoolKey pool_key;
+	for (const Uniform& uniform : uniforms) {
+		auto binding_it = set.find_binding(uniform.binding);
+		
+		if (binding_it == set.bindings.end())
+			throw std::runtime_error("No binding found");
+
+		VkWriteDescriptorSet write{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = binding_it->binding,
+			.dstArrayElement = 0
+		};
+
+		switch (uniform.type) {
+			//case UniformType::SampledImage: {
+			//
+			//	std::vector<VkDescriptorImageInfo> image_infos;
+			//	image_infos.reserve(uniform.ids.size());
+			//
+			//	for (size_t i = 0; i < uniform.ids.size(); i++) {
+			//		Image& image = m_images[uniform.ids[i]];
+			//
+			//		VkDescriptorImageInfo image_info{
+			//			.imageView = image.view,
+			//			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			//		};
+			//
+			//		image_infos.push_back(image_info);
+			//	}
+			//
+			//	write.descriptorCount = (uint32_t)uniform.ids.size();
+			//	write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+			//	write.pImageInfo = image_infos.data();
+			//
+			//	writes.push_back(write);
+			//
+			//	image_infos_collector.push_back(std::move(image_infos));
+			//}
+		case UniformType::UniformBuffer: {
+				std::vector<VkDescriptorBufferInfo> buffer_infos;
+
+				for (size_t i = 0; i < uniform.ids.size(); i++) {
+					Buffer& buffer = m_buffers[uniform.ids[i]];
+
+					VkDescriptorBufferInfo buffer_info{
+						.buffer = buffer.buffer,
+						.offset = 0,
+						.range = VK_WHOLE_SIZE
+					};
+
+					buffer_infos.push_back(buffer_info);
+
+					write.descriptorCount = (uint32_t)uniform.ids.size();
+					write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+					write.pBufferInfo = buffer_infos.data();
+
+					buffer_infos_collector.push_back(std::move(buffer_infos));
+				}
+			}
+		}
+
+		pool_key.uniform_type_counts[(uint32_t)uniform.type] = write.descriptorCount;
+
+		writes.push_back(write);
+	}
+
+	uint32_t pool_idx = descriptor_pool_allocate(pool_key);
+	const DescriptorPool& pool = m_descriptor_pools.at(pool_key)[pool_idx];
+
+	VkDescriptorSetAllocateInfo set_allocate_info{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = pool.pool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &m_shaders[shader_id].info->set_layouts[set_idx]
+	};
+	
+	VkDescriptorSet descriptor_set;
+	if (vkAllocateDescriptorSets(m_context->device(), &set_allocate_info, &descriptor_set) != VK_SUCCESS)
+		throw std::runtime_error("Failed to allocate descriptor set");
+
+	UniformSet uniform_set{
+		.pool_key = pool_key,
+		.pool_idx = pool_idx,
+		.shader = shader_id,
+		.set_idx= set_idx,
+		.descriptor_set = descriptor_set
+	};
+
+	for (VkWriteDescriptorSet& write : writes) {
+		write.dstSet = descriptor_set;
+	}
+	vkUpdateDescriptorSets(m_context->device(), (uint32_t)writes.size(), writes.data(), 0, nullptr);
+
+	m_uniform_sets.push_back(std::move(uniform_set));
+
+	return (UniformSetId)m_uniform_sets.size() - 1;
+}
+
 
 
 
@@ -608,18 +725,6 @@ void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, Vk
 	vkCmdCopyBuffer(mem_buffer, staging_buffer, buffer, 1, &region);
 
 	m_context->submit_staging_buffer(staging_buffer, staging_memory);
-}
-
-uint32_t VulkanGraphicsController::find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
-	const VkPhysicalDeviceMemoryProperties& mem_props = m_context->physical_device_mem_props();
-
-	for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
-		if ((type_filter & (1 << i)) && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
-			return i;
-		}
-	}
-
-	throw std::runtime_error("Failed to find suitable memory type");
 }
 
 VkImage VulkanGraphicsController::image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
@@ -722,6 +827,93 @@ void VulkanGraphicsController::transition_image_layout(VkImage image, VkFormat, 
 		0, nullptr,
 		1, &barrier
 	);
+}
+
+uint32_t VulkanGraphicsController::find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
+	const VkPhysicalDeviceMemoryProperties& mem_props = m_context->physical_device_mem_props();
+
+	for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
+		if ((type_filter & (1 << i)) && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
+			return i;
+		}
+	}
+
+	throw std::runtime_error("Failed to find suitable memory type");
+}
+
+uint32_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPoolKey& key) {
+	if (!m_descriptor_pools.contains(key)) {
+		m_descriptor_pools[key] = {};
+	}
+
+	std::vector<DescriptorPool>& pools = m_descriptor_pools.at(key);
+
+	for (uint32_t i = 0; i < pools.size(); i++) {
+		if (pools[i].usage_count < MAX_SETS_PER_DESCRIPTOR_POOL) {
+			pools[i].usage_count++;
+			return i;
+		}
+	}
+	
+	std::vector<VkDescriptorPoolSize> sizes;
+
+	if (key.uniform_type_counts[(uint32_t)UniformType::Sampler]) {
+		VkDescriptorPoolSize size{
+			.type = VK_DESCRIPTOR_TYPE_SAMPLER,
+			.descriptorCount = key.uniform_type_counts[(uint32_t)UniformType::Sampler] * MAX_SETS_PER_DESCRIPTOR_POOL
+		};
+
+		sizes.push_back(size);
+	}
+	if (key.uniform_type_counts[(uint32_t)UniformType::CombinedImageSampler]) {
+		VkDescriptorPoolSize size{
+			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = key.uniform_type_counts[(uint32_t)UniformType::CombinedImageSampler] * MAX_SETS_PER_DESCRIPTOR_POOL
+		};
+
+		sizes.push_back(size);
+	}
+	if (key.uniform_type_counts[(uint32_t)UniformType::SampledImage]) {
+		VkDescriptorPoolSize size{
+			.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+			.descriptorCount = key.uniform_type_counts[(uint32_t)UniformType::SampledImage] * MAX_SETS_PER_DESCRIPTOR_POOL
+		};
+
+		sizes.push_back(size);
+	}
+	if (key.uniform_type_counts[(uint32_t)UniformType::UniformBuffer]) {
+		VkDescriptorPoolSize size{
+			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = key.uniform_type_counts[(uint32_t)UniformType::UniformBuffer] * MAX_SETS_PER_DESCRIPTOR_POOL
+		};
+
+		sizes.push_back(size);
+	}
+
+	VkDescriptorPoolCreateInfo pool_info{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+		.maxSets = MAX_SETS_PER_DESCRIPTOR_POOL,
+		.poolSizeCount = (uint32_t)sizes.size(),
+		.pPoolSizes = sizes.data()
+	};
+
+	VkDescriptorPool pool;
+	if (vkCreateDescriptorPool(m_context->device(), &pool_info, nullptr, &pool) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create descriptor pool");
+
+	DescriptorPool desc_pool{
+		.pool = pool,
+		.usage_count = 1
+	};
+
+	pools.push_back(desc_pool);
+
+	return (uint32_t)pools.size() - 1;
+}
+
+void VulkanGraphicsController::descriptor_pools_free() {
+
 }
 
 void VulkanGraphicsController::find_depth_format() {

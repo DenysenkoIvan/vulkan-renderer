@@ -2,6 +2,7 @@
 
 #include "VulkanContext.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,7 @@ using PipelineId = uint32_t;
 using TextureId = uint32_t;
 using UniformSetId = uint32_t;
 
-enum class PrimitiveTopology {
+enum class PrimitiveTopology : uint32_t {
 	PointList = 0,
 	LineList = 1,
 	TriangleList = 3
@@ -23,20 +24,20 @@ struct PipelineAssembly {
 	bool restart_enable;
 };
 
-enum class PolygonMode {
+enum class PolygonMode : uint32_t {
 	Fill = 0,
 	Line = 1,
 	Point = 2
 };
 
-enum class CullMode {
+enum class CullMode : uint32_t {
 	None = 0,
 	Front = 1,
 	Back = 2,
 	FrontAndBack = 3
 };
 
-enum class FrontFace {
+enum class FrontFace : uint32_t {
 	CounterClockwise = 0,
 	Clockwise = 1
 };
@@ -60,6 +61,11 @@ struct PipelineInfo {
 	Rasterization raster;
 };
 
+enum class IndexType : uint32_t {
+	Uint16 = 0,
+	Uint32 = 1
+};
+
 enum class UniformType : uint32_t {
 	Sampler = 0,
 	CombinedImageSampler = 1,
@@ -67,15 +73,10 @@ enum class UniformType : uint32_t {
 	UniformBuffer = 6
 };
 
-struct UniformInfo {
+struct Uniform {
 	UniformType type;
 	uint32_t binding;
-	RenderId id;
-};
-
-enum class IndexType {
-	Uint16 = 0,
-	Uint32 = 1
+	std::vector<RenderId> ids;
 };
 
 class VulkanGraphicsController {
@@ -99,17 +100,52 @@ public:
 
 	TextureId texture_create(const void* data, uint32_t width, uint32_t height);
 
+	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms);
+
 	//UniformSetId create_uniform_set(const std::vector<Uniform>& uniforms);
 	//BufferId create_index_buffer();
 	//BufferId create_uniform_buffer();
 
 private:
 	// Buffers
+	struct VertexBuffer {
+
+	};
+
+	struct IndexBuffer {
+		VkIndexType index_type;
+		uint32_t index_count;
+	};
+
+	struct UniformBuffer {
+
+	};
+
+	struct Buffer {
+		VkBuffer buffer;
+		VkDeviceSize size;
+		VkDeviceMemory memory;
+		VkBufferUsageFlags usage;
+		union {
+			VertexBuffer vertex;
+			IndexBuffer index;
+			UniformBuffer uniform;
+		};
+	};
+
 	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
 	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
 	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
 	
 	// Images
+	struct Image {
+		VkImage image;
+		VkDeviceMemory memory;
+		VkImageView view;
+		VkExtent2D extent;
+		VkImageUsageFlags usage;
+	};
+
 	VkImage image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
 	VkDeviceMemory image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
 	VkImageView image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
@@ -117,6 +153,37 @@ private:
 	void transition_image_layout(VkImage image, VkFormat, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
+	// Descriptor Pool
+	struct DescriptorPoolKey {
+		union {
+			struct {
+				uint16_t uniform_type_counts[10];
+			};
+			struct {
+				uint64_t key0;
+				uint16_t key1;
+			};
+		};
+
+		bool operator<(const DescriptorPoolKey& key) const {
+			return key0 < key.key0&& key1 < key.key1;
+		}
+
+		DescriptorPoolKey() {
+			memset(uniform_type_counts, 0, sizeof(uniform_type_counts));
+		}
+	};
+
+	static constexpr uint32_t MAX_SETS_PER_DESCRIPTOR_POOL = 64;
+
+	struct DescriptorPool {
+		VkDescriptorPool pool;
+		uint32_t usage_count;
+	};
+
+	uint32_t descriptor_pool_allocate(const DescriptorPoolKey& key);
+	void descriptor_pools_free();
 
 	void find_depth_format();
 	void create_depth_resources();
@@ -163,37 +230,12 @@ private:
 		VkPipeline pipeline;
 	};
 
-	struct Image {
-		VkImage image;
-		VkDeviceMemory memory;
-		VkImageView view;
-		VkExtent2D extent;
-		VkImageUsageFlags usage;
-	};
-
-	struct VertexBuffer {
-
-	};
-
-	struct IndexBuffer {
-		VkIndexType index_type;
-		uint32_t index_count;
-	};
-
-	struct UniformBuffer {
-
-	};
-
-	struct Buffer {
-		VkBuffer buffer;
-		VkDeviceSize size;
-		VkDeviceMemory memory;
-		VkBufferUsageFlags usage;
-		union {
-			VertexBuffer vertex;
-			IndexBuffer index;
-			UniformBuffer uniform;
-		};
+	struct UniformSet {
+		DescriptorPoolKey pool_key;
+		uint32_t pool_idx;
+		ShaderId shader;
+		uint32_t set_idx;
+		VkDescriptorSet descriptor_set;
 	};
 
 	struct DrawCall {
@@ -209,6 +251,8 @@ private:
 	std::vector<Pipeline> m_pipelines;
 	std::vector<Buffer> m_buffers;
 	std::vector<Image> m_images;
+	std::map<DescriptorPoolKey, std::vector<DescriptorPool>> m_descriptor_pools;
+	std::vector<UniformSet> m_uniform_sets;
 
 	std::vector<DrawCall> m_draw_calls;
 

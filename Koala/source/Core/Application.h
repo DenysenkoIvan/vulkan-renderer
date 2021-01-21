@@ -11,6 +11,11 @@
 
 #include <Renderer/VulkanGraphicsController.h>
 
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 int main(int argc, char** argv);
 
 struct ApplicationProperties {
@@ -55,5 +60,16 @@ private:
 	BufferId m_index_buffer2;
 	BufferId m_index_buffer3;
 	TextureId m_texture;
+	BufferId m_uniform_buffer;
+	UniformSetId m_uniform_set;
+	
+	struct MVP {
+		alignas(16) glm::mat4 model;
+		alignas(16) glm::mat4 view;
+		alignas(16) glm::mat4 proj;
+	};
+
+	MVP m_mvp;
+
 	//VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };

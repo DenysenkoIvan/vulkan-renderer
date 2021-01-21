@@ -23,6 +23,9 @@ public:
 	Window() = default;
 	~Window();
 
+	int width();
+	int height();
+
 	bool is_minimized();
 
 	void initialize(const WindowProperties& window_porps);
@@ -43,6 +46,8 @@ private:
 private:
 	Event::event_handler_fn m_callback;
 	GLFWwindow* m_window = nullptr;
+	int m_width;
+	int m_height;
 
 	std::unique_ptr<VulkanContext> m_context;
 };

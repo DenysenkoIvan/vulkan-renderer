@@ -41,6 +41,10 @@ Application::Application(const ApplicationProperties& props) {
 		6, 7, 8
 	};
 
+	m_mvp.model = glm::mat4(1);
+	m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
+
 	m_graphics_controller.create(m_window.context());
 
 	auto load_spv = [](const std::filesystem::path& path) -> std::vector<uint8_t> {
@@ -88,6 +92,20 @@ Application::Application(const ApplicationProperties& props) {
 		throw std::runtime_error("Failed to load image");
 	
 	m_texture = m_graphics_controller.texture_create(pixels, width, height);
+
+	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
+
+	std::vector<Uniform> uniforms;
+	uniforms.reserve(1);
+	
+	Uniform uniform;
+	uniform.type = UniformType::UniformBuffer;
+	uniform.binding = 0;
+	uniform.ids.push_back(m_uniform_buffer);
+
+	uniforms.push_back(std::move(uniform));
+
+	m_uniform_set = m_graphics_controller.uniform_set_create(m_shader, 0, uniforms);
 }
 
 Application::~Application() {
@@ -179,10 +197,12 @@ void Application::on_render() {
 	//
 	//m_renderer.end_frame();
 
+	std::vector<UniformSetId> uniform_sets{ m_uniform_set };
+
 	m_graphics_controller.begin_frame();
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer1, {});
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, {});
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, {});
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer1, uniform_sets);
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, uniform_sets);
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, uniform_sets);
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)
