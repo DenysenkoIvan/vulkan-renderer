@@ -11,6 +11,7 @@ using BufferId = uint32_t;
 using ShaderId = uint32_t;
 using PipelineId = uint32_t;
 using TextureId = uint32_t;
+using SamplerId = uint32_t;
 using UniformSetId = uint32_t;
 
 enum class PrimitiveTopology : uint32_t {
@@ -79,6 +80,61 @@ struct Uniform {
 	std::vector<RenderId> ids;
 };
 
+enum class Filter : uint32_t {
+	Nearest = 0,
+	Linear = 1
+};
+
+enum class MipMapMode : uint32_t {
+	Nearest = 0,
+	Linear = 1
+};
+
+enum class SamplerAddressMode : uint32_t {
+	Repeat = 0,
+	MirroredRepeat = 1,
+	ClampToEdge = 2,
+	ClampToBorder = 3
+};
+
+enum class CompareOp {
+	Never = 0,
+	Less = 1,
+	Equal = 2,
+	LessOrEqual = 3,
+	Greater = 4,
+	NotEqual = 5,
+	GreaterOrEqual = 6,
+	Always = 7
+};
+
+enum class BorderColor : uint32_t {
+	FloatTransparentBlack = 0,
+	IntTransparentBlack = 1,
+	FloatOpaqueBlack = 2,
+	IntOpaqueBlack = 3,
+	FloatOpaqueWhite = 4,
+	IntOpaqueWhite = 5
+};
+
+struct SamplerInfo {
+	Filter mag_filter = Filter::Linear;
+	Filter min_filter = Filter::Linear;
+	MipMapMode mip_map_mode = MipMapMode::Linear;
+	SamplerAddressMode address_mode_u = SamplerAddressMode::Repeat;
+	SamplerAddressMode address_mode_v = SamplerAddressMode::Repeat;
+	SamplerAddressMode address_mode_w = SamplerAddressMode::Repeat;
+	float mip_lod_bias = 0.0f;
+	bool anisotropy_enable = false;
+	float max_anisotropy = 0.0f;
+	bool compare_enable = false;
+	CompareOp comapare_op = CompareOp::Always;
+	float min_lod = 0.0f;
+	float max_lod = 0.0f;
+	BorderColor border_color = BorderColor::IntOpaqueBlack;
+	bool unnormalized_coordinates = false;
+};
+
 class VulkanGraphicsController {
 public:
 	void create(VulkanContext* context);
@@ -98,7 +154,11 @@ public:
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
 	BufferId uniform_buffer_create(const void* data, size_t size);
 
+	void buffer_update(BufferId buffer_id, const void* data);
+
 	TextureId texture_create(const void* data, uint32_t width, uint32_t height);
+
+	SamplerId sampler_create(const SamplerInfo& info);
 
 	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms);
 
@@ -107,6 +167,45 @@ public:
 	//BufferId create_uniform_buffer();
 
 private:
+	// Shader	
+	struct Set {
+		uint32_t set;
+		std::vector<VkDescriptorSetLayoutBinding> bindings;
+
+		std::vector<VkDescriptorSetLayoutBinding>::iterator find_binding(uint32_t binding_idx) {
+			return std::find_if(bindings.begin(), bindings.end(), [binding_idx](const auto& binding) { return binding.binding == binding_idx; });
+		}
+	};
+
+	struct ShaderInfo {
+		std::vector<Set> sets;
+		std::vector<VkDescriptorSetLayout> set_layouts;
+		std::vector<VkVertexInputAttributeDescription> attribute_descriptions;
+		VkVertexInputBindingDescription binding_description;
+		std::string vertex_entry;
+		std::string fragment_entry;
+		VkShaderModule vertex_module;
+		VkShaderModule fragment_module;
+
+		std::vector<Set>::iterator find_set(uint32_t set_id) {
+			return std::find_if(sets.begin(), sets.end(), [set_id](const Set& set) { return set.set == set_id; });
+		}
+	};
+
+	struct Shader {
+		std::unique_ptr<ShaderInfo> info;
+
+		std::array<VkPipelineShaderStageCreateInfo, 2> stage_create_infos;
+		VkPipelineVertexInputStateCreateInfo vertex_input_create_info;
+		VkPipelineLayout pipeline_layout;
+	};
+
+	// Pipeline
+	struct Pipeline {
+		PipelineInfo info;
+		VkPipeline pipeline;
+	};
+
 	// Buffers
 	struct VertexBuffer {
 
@@ -144,6 +243,7 @@ private:
 		VkImageView view;
 		VkExtent2D extent;
 		VkImageUsageFlags usage;
+		VkImageLayout layout;
 	};
 
 	VkImage image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
@@ -154,20 +254,18 @@ private:
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
+	// Sampler
+	struct Sampler {
+		SamplerInfo info;
+		VkSampler sampler;
+	};
+
 	// Descriptor Pool
 	struct DescriptorPoolKey {
-		union {
-			struct {
-				uint16_t uniform_type_counts[10];
-			};
-			struct {
-				uint64_t key0;
-				uint16_t key1;
-			};
-		};
+		uint16_t uniform_type_counts[10];
 
-		bool operator<(const DescriptorPoolKey& key) const {
-			return key0 < key.key0&& key1 < key.key1;
+		bool operator<(const DescriptorPoolKey& other) const {
+			return 0 > memcmp(uniform_type_counts, other.uniform_type_counts, sizeof(uniform_type_counts));
 		}
 
 		DescriptorPoolKey() {
@@ -185,51 +283,7 @@ private:
 	uint32_t descriptor_pool_allocate(const DescriptorPoolKey& key);
 	void descriptor_pools_free();
 
-	void find_depth_format();
-	void create_depth_resources();
-	void destroy_depth_resources();
-	void create_render_pass();
-	void create_framebuffer();
-	void destroy_framebuffer();
-
-private:
-	struct Set {
-		uint32_t set;
-		std::vector<VkDescriptorSetLayoutBinding> bindings;
-
-		std::vector<VkDescriptorSetLayoutBinding>::iterator find_binding(uint32_t binding_idx) {
-			return std::find_if(bindings.begin(), bindings.end(), [binding_idx](const auto& binding) { return binding.binding == binding_idx; });
-		}
-	};
-
-	struct ShaderInfo {
-		std::vector<Set> sets;
-		std::vector<VkDescriptorSetLayout> set_layouts;
-		std::vector<VkVertexInputAttributeDescription> attribute_descriptions;
-		VkVertexInputBindingDescription binding_description;
-		std::string vertex_entry;
-		std::string fragment_entry;
-		VkShaderModule vertex_module;
-		VkShaderModule fragment_module;
-
-		std::vector<Set>::iterator find_set(uint32_t set_id) {
-			return std::find_if(sets.begin(), sets.end(), [set_id](const Set& set) { return set.set == set_id; });
-		}
-	};
-
-	struct Shader {
-		std::unique_ptr<ShaderInfo> info;
-
-		std::array<VkPipelineShaderStageCreateInfo, 2> stage_create_infos;
-		VkPipelineVertexInputStateCreateInfo vertex_input_create_info;
-		VkPipelineLayout pipeline_layout;
-	};
-
-	struct Pipeline {
-		PipelineInfo info;
-		VkPipeline pipeline;
-	};
-
+	// Uniform Set
 	struct UniformSet {
 		DescriptorPoolKey pool_key;
 		uint32_t pool_idx;
@@ -238,6 +292,7 @@ private:
 		VkDescriptorSet descriptor_set;
 	};
 
+	// Draw Call
 	struct DrawCall {
 		PipelineId pipeline;
 		BufferId vertex_buffer;
@@ -245,12 +300,21 @@ private:
 		std::vector<UniformSetId> uniform_sets;
 	};
 
+	void find_depth_format();
+	void create_depth_resources();
+	void destroy_depth_resources();
+	void create_render_pass();
+	void create_framebuffer();
+	void destroy_framebuffer();
+
+private:
 	VulkanContext* m_context;
 
 	std::vector<Shader> m_shaders;
 	std::vector<Pipeline> m_pipelines;
 	std::vector<Buffer> m_buffers;
 	std::vector<Image> m_images;
+	std::vector<Sampler> m_samplers;
 	std::map<DescriptorPoolKey, std::vector<DescriptorPool>> m_descriptor_pools;
 	std::vector<UniformSet> m_uniform_sets;
 

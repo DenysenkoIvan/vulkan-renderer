@@ -13,8 +13,10 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 int main(int argc, char** argv);
 
@@ -23,6 +25,15 @@ struct ApplicationProperties {
 	uint32_t app_version = 0;
 	uint32_t width = 800;
 	uint32_t height = 480;
+};
+
+struct Vertex {
+	glm::vec3 pos;
+	glm::vec2 tex_pos;
+
+	bool operator==(const Vertex& v) const {
+		return pos == v.pos && tex_pos == v.tex_pos;
+	}
 };
 
 class Application {
@@ -56,12 +67,16 @@ private:
 	ShaderId m_shader;
 	PipelineId m_pipeline;
 	BufferId m_vertex_buffer;
-	BufferId m_index_buffer1;
-	BufferId m_index_buffer2;
-	BufferId m_index_buffer3;
-	TextureId m_texture;
+	BufferId m_index_buffer;
+	//BufferId m_vertex_buffer;
+	//BufferId m_index_buffer1;
+	//BufferId m_index_buffer2;
+	//BufferId m_index_buffer3;
 	BufferId m_uniform_buffer;
-	UniformSetId m_uniform_set;
+	TextureId m_texture;
+	SamplerId m_sampler;
+	UniformSetId m_uniform_set0;
+	UniformSetId m_uniform_set1;
 	
 	struct MVP {
 		alignas(16) glm::mat4 model;
@@ -69,7 +84,19 @@ private:
 		alignas(16) glm::mat4 proj;
 	};
 
+	
+
 	MVP m_mvp;
+	std::vector<Vertex> m_vertices;
+	std::vector<uint32_t> m_indices;
 
 	//VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };
+
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec2>()(vertex.tex_pos) << 1)) >> 1);
+		}
+	};
+}

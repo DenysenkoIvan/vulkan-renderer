@@ -2,6 +2,7 @@
 
 #include <Renderer/VulkanContext.h>
 #include <stb_image/stb_image.h>
+#include <tiny_obj_loader/tiny_obj_loader.h>
 
 #include <filesystem>
 #include <fstream>
@@ -17,33 +18,34 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_window.initialize(window_props);
 
-	float vertices[] = {
-		-0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-		 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-		 0.0f,  0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-		-0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-		 0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-		 0.0f, -0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-		-0.5f, -0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-		-0.5f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-		 0.0f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-	};
-
-	uint32_t indices1[] = {
-		0, 1, 2
-	};
-
-	uint32_t indices2[] = {
-		3, 4, 5
-	};
-
-	uint32_t indices3[] = {
-		6, 7, 8
-	};
+	//float vertices[] = {
+	//	-0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+	//	 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+	//	 0.0f,  0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
+	//	-0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+	//	 0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+	//	 0.0f, -0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
+	//	-0.5f, -0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
+	//	-0.5f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
+	//	 0.0f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
+	//};
+	//
+	//uint32_t indices1[] = {
+	//	0, 1, 2
+	//};
+	//
+	//uint32_t indices2[] = {
+	//	3, 4, 5
+	//};
+	//
+	//uint32_t indices3[] = {
+	//	6, 7, 8
+	//};
 
 	m_mvp.model = glm::mat4(1);
 	m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
+	m_mvp.proj[1][1] *= -1;
 
 	m_graphics_controller.create(m_window.context());
 
@@ -80,10 +82,47 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
 
-	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
-	m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
-	m_index_buffer2 = m_graphics_controller.index_buffer_create(indices2, sizeof(indices2), IndexType::Uint32);
-	m_index_buffer3 = m_graphics_controller.index_buffer_create(indices3, sizeof(indices3), IndexType::Uint32);
+	tinyobj::attrib_t attrib;
+	std::vector<tinyobj::shape_t> shapes;
+	std::vector<tinyobj::material_t> materials;
+	std::string warn, err;
+
+	if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, "../assets/models/viking_room.obj"))
+		throw std::runtime_error(warn + err);
+
+	std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+	for (const auto& shape : shapes) {
+		for (const auto& index : shape.mesh.indices) {
+			Vertex vertex{};
+
+			vertex.pos = {
+				attrib.vertices[3 * index.vertex_index + 0],
+				attrib.vertices[3 * index.vertex_index + 1],
+				attrib.vertices[3 * index.vertex_index + 2]
+			};
+
+			vertex.tex_pos = {
+				attrib.texcoords[2 * index.texcoord_index + 0],
+				1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+			};
+
+			if (uniqueVertices.count(vertex) == 0) {
+				uniqueVertices[vertex] = static_cast<uint32_t>(m_vertices.size());
+				m_vertices.push_back(vertex);
+			}
+
+			m_indices.push_back(uniqueVertices[vertex]);
+		}
+	}
+
+	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
+	m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), IndexType::Uint32);
+
+	//m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
+	//m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
+	//m_index_buffer2 = m_graphics_controller.index_buffer_create(indices2, sizeof(indices2), IndexType::Uint32);
+	//m_index_buffer3 = m_graphics_controller.index_buffer_create(indices3, sizeof(indices3), IndexType::Uint32);
 	
 	int width = 0, height = 0, channels = 0;
 	stbi_uc* pixels = stbi_load("../assets/models/viking_room.png", &width, &height, &channels, STBI_rgb_alpha);
@@ -91,21 +130,36 @@ Application::Application(const ApplicationProperties& props) {
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 	
-	m_texture = m_graphics_controller.texture_create(pixels, width, height);
-
 	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
-
-	std::vector<Uniform> uniforms;
-	uniforms.reserve(1);
 	
-	Uniform uniform;
-	uniform.type = UniformType::UniformBuffer;
-	uniform.binding = 0;
-	uniform.ids.push_back(m_uniform_buffer);
+	m_texture = m_graphics_controller.texture_create(pixels, width, height);
+	
+	SamplerInfo sampler_info{};
 
-	uniforms.push_back(std::move(uniform));
+	m_sampler = m_graphics_controller.sampler_create(sampler_info);
 
-	m_uniform_set = m_graphics_controller.uniform_set_create(m_shader, 0, uniforms);
+	std::vector<Uniform> uniform_set0;
+	uniform_set0.reserve(1);
+	std::vector<Uniform> uniform_set1;
+	uniform_set1.reserve(2);
+	
+	Uniform uniform_buffer;
+	uniform_buffer.type = UniformType::UniformBuffer;
+	uniform_buffer.binding = 0;
+	uniform_buffer.ids.push_back(m_uniform_buffer);
+
+	Uniform texture;
+	texture.type = UniformType::CombinedImageSampler;
+	texture.binding = 0;
+	texture.ids.push_back(m_texture);
+	texture.ids.push_back(m_sampler);
+
+	uniform_set0.push_back(std::move(uniform_buffer));
+
+	uniform_set1.push_back(std::move(texture));
+
+	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_shader, 0, uniform_set0);
+	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_shader, 1, uniform_set1);
 }
 
 Application::~Application() {
@@ -148,11 +202,19 @@ void Application::on_window_resize(WindowResizeEvent& e) {
 }
 
 void Application::on_update() {
+	static auto start_time = std::chrono::high_resolution_clock::now();
+	auto current_time = std::chrono::high_resolution_clock::now();
+	float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+
 	double time_point = glfwGetTime();
 
 	static float delta = 0.68f;
 
 	float time_diff = (float)(time_point - m_prev_time_point);
+
+	m_mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+	m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
 
 	//float value = m_clear_value.color.float32[0];
 
@@ -188,21 +250,12 @@ void Application::on_update() {
 }
 
 void Application::on_render() {
-	//m_renderer.begin_frame();
-	//m_renderer.clear_screen(m_clear_value);
-	//
-	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer1);
-	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer2);
-	//m_renderer.submit_geometry(*m_vertex_buffer, *m_index_buffer3);
-	//
-	//m_renderer.end_frame();
-
-	std::vector<UniformSetId> uniform_sets{ m_uniform_set };
+	std::vector<UniformSetId> uniform_sets{ m_uniform_set0, m_uniform_set1 };
 
 	m_graphics_controller.begin_frame();
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer1, uniform_sets);
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, uniform_sets);
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, uniform_sets);
+	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, uniform_sets);
+	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, uniform_sets);
+	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, uniform_sets);
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)

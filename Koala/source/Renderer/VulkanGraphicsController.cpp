@@ -189,15 +189,15 @@ void VulkanGraphicsController::end_frame() {
 		vkCmdBindVertexBuffers(draw_buffer, 0, 1, vertex_buffers, offsets);
 		vkCmdBindIndexBuffer(draw_buffer, m_buffers[draw_call.index_buffer].buffer, 0, m_buffers[draw_call.index_buffer].index.index_type);
 		for (UniformSetId set_id : draw_call.uniform_sets) {
-			
+			UniformSet& uniform_set = m_uniform_sets[set_id];
 
 			vkCmdBindDescriptorSets(
 				draw_buffer,
 				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_shaders[m_pipelines[draw_call.pipeline].info.shader].pipeline_layout,
-				0,
+				m_shaders[uniform_set.shader].pipeline_layout,
+				uniform_set.set_idx,
 				1,
-				&m_uniform_sets[set_id].descriptor_set,
+				&uniform_set.descriptor_set,
 				0, nullptr);
 		}
 		vkCmdDrawIndexed(draw_buffer, m_buffers[draw_call.index_buffer].index.index_count, 1, 0, 0, 0);
@@ -267,7 +267,9 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 
 			auto set_it = shader.info->find_set(set_idx);
 			if (set_it == shader.info->sets.end()) {
-				shader.info->sets.push_back({});
+				Set set;
+				set.set = set_idx;
+				shader.info->sets.push_back(set);
 				set_it = shader.info->sets.end() - 1;
 			}
 
@@ -539,6 +541,12 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 	return (BufferId)m_buffers.size() - 1;
 }
 
+void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
+	Buffer& buffer = m_buffers[buffer_id];
+
+	buffer_copy(buffer.buffer, data, buffer.size);
+}
+
 TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t width, uint32_t height) {
 	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
 	VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -548,7 +556,8 @@ TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t wi
 		.memory = image_allocate(image.image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
 		.view = image_view_create(image.image, format, aspect),
 		.extent = { width, height },
-		.usage = VK_IMAGE_USAGE_SAMPLED_BIT
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+		.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 	};
 
 	VkDeviceSize size = width * height * 4;
@@ -557,11 +566,43 @@ TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t wi
 
 	image_copy(image.image, { width, height }, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
 
-	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.layout);
 
 	m_images.push_back(image);
 
 	return (TextureId)m_images.size() - 1;
+}
+
+SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
+	VkSamplerCreateInfo sampler_info{
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = (VkFilter)info.mag_filter,
+		.minFilter = (VkFilter)info.min_filter,
+		.mipmapMode = (VkSamplerMipmapMode)info.mip_map_mode,
+		.addressModeU = (VkSamplerAddressMode)info.address_mode_u,
+		.addressModeV = (VkSamplerAddressMode)info.address_mode_v,
+		.addressModeW = (VkSamplerAddressMode)info.address_mode_w,
+		.mipLodBias = info.mip_lod_bias,
+		.anisotropyEnable = info.anisotropy_enable,
+		.maxAnisotropy = info.max_anisotropy,
+		.compareEnable = info.compare_enable,
+		.compareOp = (VkCompareOp)info.comapare_op,
+		.minLod = info.min_lod,
+		.maxLod = info.max_lod,
+		.borderColor = (VkBorderColor)info.border_color,
+		.unnormalizedCoordinates = info.unnormalized_coordinates
+	};
+
+	Sampler sampler{
+		.info = info
+	};
+
+	if (vkCreateSampler(m_context->device(), &sampler_info, nullptr, &sampler.sampler) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create sampler");
+
+	m_samplers.push_back(sampler);
+
+	return (SamplerId)m_samplers.size() - 1;
 }
 
 UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms) {
@@ -585,51 +626,74 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		};
 
 		switch (uniform.type) {
-			//case UniformType::SampledImage: {
-			//
-			//	std::vector<VkDescriptorImageInfo> image_infos;
-			//	image_infos.reserve(uniform.ids.size());
-			//
-			//	for (size_t i = 0; i < uniform.ids.size(); i++) {
-			//		Image& image = m_images[uniform.ids[i]];
-			//
-			//		VkDescriptorImageInfo image_info{
-			//			.imageView = image.view,
-			//			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-			//		};
-			//
-			//		image_infos.push_back(image_info);
-			//	}
-			//
-			//	write.descriptorCount = (uint32_t)uniform.ids.size();
-			//	write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-			//	write.pImageInfo = image_infos.data();
-			//
-			//	writes.push_back(write);
-			//
-			//	image_infos_collector.push_back(std::move(image_infos));
-			//}
 		case UniformType::UniformBuffer: {
-				std::vector<VkDescriptorBufferInfo> buffer_infos;
+			std::vector<VkDescriptorBufferInfo> buffer_infos;
 
-				for (size_t i = 0; i < uniform.ids.size(); i++) {
-					Buffer& buffer = m_buffers[uniform.ids[i]];
+			for (size_t i = 0; i < uniform.ids.size(); i++) {
+				Buffer& buffer = m_buffers[uniform.ids[i]];
 
-					VkDescriptorBufferInfo buffer_info{
-						.buffer = buffer.buffer,
-						.offset = 0,
-						.range = VK_WHOLE_SIZE
-					};
+				VkDescriptorBufferInfo buffer_info{
+					.buffer = buffer.buffer,
+					.offset = 0,
+					.range = VK_WHOLE_SIZE
+				};
 
-					buffer_infos.push_back(buffer_info);
-
-					write.descriptorCount = (uint32_t)uniform.ids.size();
-					write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-					write.pBufferInfo = buffer_infos.data();
-
-					buffer_infos_collector.push_back(std::move(buffer_infos));
-				}
+				buffer_infos.push_back(buffer_info);
 			}
+
+			write.descriptorCount = (uint32_t)uniform.ids.size();
+			write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			write.pBufferInfo = buffer_infos.data();
+			
+			buffer_infos_collector.push_back(std::move(buffer_infos));
+
+			break;
+		}
+		case UniformType::SampledImage: {
+			std::vector<VkDescriptorImageInfo> image_infos;
+
+			for (size_t i = 0; i < uniform.ids.size(); i++) {
+				Image& image = m_images[uniform.ids[i]];
+
+				VkDescriptorImageInfo image_info{
+					.imageView = image.view,
+					.imageLayout = image.layout
+				};
+
+				image_infos.push_back(image_info);
+			}
+
+			write.descriptorCount = (uint32_t)uniform.ids.size();
+			write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+			write.pImageInfo = image_infos.data();
+
+			image_infos_collector.push_back(std::move(image_infos));
+
+			break;
+		}
+		case UniformType::CombinedImageSampler: {
+			std::vector<VkDescriptorImageInfo> image_infos;
+
+			for (size_t i = 0; i < uniform.ids.size(); i += 2) {
+				Image& image = m_images[uniform.ids[i]];
+
+				VkDescriptorImageInfo image_info{
+					.sampler = m_samplers[uniform.ids[i + 1]].sampler,
+					.imageView = image.view,
+					.imageLayout = image.layout
+				};
+
+				image_infos.push_back(image_info);
+			}
+
+			write.descriptorCount = (uint32_t)uniform.ids.size() / 2;
+			write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			write.pImageInfo = image_infos.data();
+
+			image_infos_collector.push_back(std::move(image_infos));
+
+			break;
+		}
 		}
 
 		pool_key.uniform_type_counts[(uint32_t)uniform.type] = write.descriptorCount;
