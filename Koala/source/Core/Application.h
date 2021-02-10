@@ -64,6 +64,12 @@ private:
 	double m_prev_time_point = 0.0;
 
 	VulkanGraphicsController m_graphics_controller;
+	glm::vec4 m_clear_color = { 1.0f, 0.0f, 1.0f, 1.0f };
+	ImageId m_color_attachment;
+	ImageId m_depth_attachment;
+	RenderPassId m_render_pass;
+	FramebufferId m_framebuffer;
+
 	ShaderId m_shader;
 	PipelineId m_pipeline;
 	BufferId m_vertex_buffer;
@@ -73,7 +79,7 @@ private:
 	//BufferId m_index_buffer2;
 	//BufferId m_index_buffer3;
 	BufferId m_uniform_buffer;
-	TextureId m_texture;
+	ImageId m_texture;
 	SamplerId m_sampler;
 	UniformSetId m_uniform_set0;
 	UniformSetId m_uniform_set1;

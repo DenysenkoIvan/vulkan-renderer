@@ -20,25 +20,24 @@ public:
 	void destroy();
 
 	void resize(uint32_t widht, uint32_t height);
-	void swap_buffers();
 
-	VkCommandBuffer memory_command_buffer() const { return m_frames[m_frame_index].memory_buffer; }
-	VkCommandBuffer draw_command_buffer() const { return m_frames[m_frame_index].draw_buffer; }
+	void sync();
 
-	void submit_staging_buffer(VkBuffer buffer, VkDeviceMemory memory);
+	void swap_buffers(VkCommandBuffer setup_buffer, VkCommandBuffer draw_buffer);
 
 	VkInstance instance() const { return m_instance; }
 	VkPhysicalDevice physical_device() const { return m_physical_device; }
 	VkDevice device() const { return m_device; }
+	uint32_t graphics_queue_index() const { return m_graphics_queue_index; }
 
 	const VkPhysicalDeviceProperties& physical_device_props() const { return m_gpu_info->properties; }
 	const VkPhysicalDeviceMemoryProperties physical_device_mem_props() const { return m_gpu_info->memory_properties; }
 
-	uint32_t image_index() const { return m_image_index; }
 	VkExtent2D swapchain_extent() const { return m_swapchain_extent; }
 	VkFormat swapchain_format() const { return m_surface_format.format; }
 	uint32_t swapchain_image_count() const { return (uint32_t)m_swapchain_images.size(); }
-	const std::vector<VkImageView>& swapchain_image_views() const { return m_swapchain_image_views; }
+	VkRenderPass swapchain_render_pass() const { return m_swapchain_render_pass; }
+	VkFramebuffer swapchain_framebuffer() const { return m_swapchain_framebuffers[m_image_index]; }
 
 private:
 	void init_extensions();
@@ -50,15 +49,10 @@ private:
 	void pick_physical_device();
 	void create_device();
 	void create_swapchain();
-	void create_command_pool();
-	void allocate_command_buffers();
+	void cleanup_swapchain();
 	void start_rendering();
+	void prepare_rendering();
 	void stop_rendering();
-	
-	void begin_buffers();
-	void end_buffers();
-	void submit_command_buffers();
-	void present_image();
 	
 	static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
 
@@ -69,19 +63,13 @@ private:
 		VkPhysicalDeviceFeatures features;
 	};
 
-	struct StagingBuffer {
-		VkBuffer buffer;
-		VkDeviceMemory memory;
-	};
-
-	struct Frame {
-		VkCommandBuffer memory_buffer;
-		VkCommandBuffer draw_buffer;
+	struct SwapchainImageResource {
+		VkImage image;
+		VkImageView view;
+		VkFramebuffer framebuffer;
 		VkSemaphore image_acquired_semaphore;
-		VkSemaphore memory_complete_semaphore;
 		VkSemaphore draw_complete_semaphore;
-		VkFence draw_complete_fence;
-		std::vector<StagingBuffer> staging_buffers;
+		VkFence image_in_use_fence;
 	};
 	
 	std::vector<const char*> m_instance_extensions;
@@ -104,7 +92,6 @@ private:
 	VkQueue m_graphics_queue;
 	VkQueue m_present_queue;
 
-	uint32_t m_image_index;
 	VkSwapchainKHR m_swapchain;
 	uint32_t m_image_count;
 	VkExtent2D m_swapchain_extent;
@@ -112,17 +99,12 @@ private:
 	VkPresentModeKHR m_present_mode;
 	std::vector<VkImage> m_swapchain_images;
 	std::vector<VkImageView> m_swapchain_image_views;
+	VkRenderPass m_swapchain_render_pass;
+	std::vector<VkFramebuffer> m_swapchain_framebuffers;
 
-	VkCommandPool m_command_pool;
-	
+	uint32_t m_image_index;
 	uint32_t m_frame_index;
-	std::array<Frame, FRAMES_IN_FLIGHT> m_frames;
-	//std::array<VkCommandBuffer, FRAMES_IN_FLIGHT> m_memory_buffers;
-	//std::array<VkCommandBuffer, FRAMES_IN_FLIGHT> m_draw_buffers;
-
-	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_image_acquired_semaphores;
-	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_memory_complete_semaphores;
-	//std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_draw_complete_semaphores;
-	//std::array<VkFence, FRAMES_IN_FLIGHT> m_draw_complete_fences;
-	std::vector<VkFence> m_images_in_flight_fences;
+	std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_image_acquired_semaphores;
+	std::array<VkSemaphore, FRAMES_IN_FLIGHT> m_draw_complete_semaphores;
+	std::array<VkFence, FRAMES_IN_FLIGHT> m_draw_complete_fences;
 };

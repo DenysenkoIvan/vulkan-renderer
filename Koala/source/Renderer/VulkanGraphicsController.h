@@ -6,13 +6,65 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 using RenderId = uint32_t;
+using RenderPassId = uint32_t;
+using FramebufferId = uint32_t;
+using ImageId = uint32_t;
 using BufferId = uint32_t;
 using ShaderId = uint32_t;
 using PipelineId = uint32_t;
-using TextureId = uint32_t;
 using SamplerId = uint32_t;
 using UniformSetId = uint32_t;
+
+enum class Format {
+	Undefined = 0,
+	RGBA8_SRGB = 43,
+	R32_UInt = 98,
+	R32_SInt = 99,
+	R32_SFloat = 100,
+	RG32_UInt = 101,
+	RG32_SInt = 102,
+	RG32_SFloat = 103,
+	RGB32_UInt = 104,
+	RGB32_SInt = 105,
+	RGB32_SFloat = 106,
+	RGBA32_UInt = 107,
+	RGBA32_SInt = 108,
+	RGBA32_SFloat = 109,
+	D32_SFloat = 126,
+	D24_UNorm_S8_UInt = 129,
+	D32_SFloat_S8_UInt = 130
+};
+
+enum ImageUsageFlagBits {
+	ImageUsageTransferSrc = 1,
+	ImageUsageTransferDst = 2,
+	ImageUsageSampled = 4,
+	ImageUsageColorAttachment = 16,
+	ImageUsageDepthStencilAttachment = 32,
+	ImageUsageCPUVisible = 1048576
+};
+using ImageUsageFlags = uint32_t;
+
+enum class InitialAction {
+	Load = 0,
+	Clear = 1,
+	DontCare = 2
+};
+
+enum class FinalAction {
+	Store = 0,
+	DontCare = 1
+};
+
+struct RenderPassAttachment {
+	ImageUsageFlags usage;
+	Format format;
+	InitialAction initial_action;
+	FinalAction final_action;
+};
 
 enum class PrimitiveTopology : uint32_t {
 	PointList = 0,
@@ -142,11 +194,19 @@ public:
 
 	void resize(uint32_t width, uint32_t height);
 	
-	void begin_frame();
+	//void submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets);
 
-	void submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets);
+	void draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count);
+	void draw_end();
+
+	void draw_begin_for_screen(glm::vec4 clear_colors);
+	void draw_end_for_screen();
 
 	void end_frame();
+
+	RenderPassId render_pass_create(RenderPassAttachment* attachments, uint32_t count);
+
+	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
 
 	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);	
 	PipelineId pipeline_create(const PipelineInfo* pipeline_info);
@@ -156,17 +216,37 @@ public:
 
 	void buffer_update(BufferId buffer_id, const void* data);
 
-	TextureId texture_create(const void* data, uint32_t width, uint32_t height);
+	ImageId image_create(const void* data, ImageUsageFlags usage, Format format, uint32_t width, uint32_t height);
+	void image_update(ImageId image_id, const void* data, size_t size);
 
 	SamplerId sampler_create(const SamplerInfo& info);
 
 	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms);
 
-	//UniformSetId create_uniform_set(const std::vector<Uniform>& uniforms);
-	//BufferId create_index_buffer();
-	//BufferId create_uniform_buffer();
-
 private:
+	struct RenderPassAttachmentInfo {
+		RenderPassAttachment attachment;
+		VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+		VkImageLayout final_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+	};
+
+	struct RenderPass {
+		std::vector<RenderPassAttachmentInfo> attachments;
+		VkRenderPass render_pass;
+	};
+
+	std::vector<RenderPass> m_render_passes;
+
+	struct Framebuffer {
+		std::vector<ImageId> attachments;
+		RenderPassId render_pass_id;
+		VkRenderPass render_pass;
+		VkFramebuffer framebuffer = VK_NULL_HANDLE;
+		VkExtent2D extent;
+	};
+
+	std::vector<Framebuffer> m_framebuffers;
+
 	// Shader	
 	struct Set {
 		uint32_t set;
@@ -242,15 +322,17 @@ private:
 		VkDeviceMemory memory;
 		VkImageView view;
 		VkExtent2D extent;
-		VkImageUsageFlags usage;
-		VkImageLayout layout;
+		VkFormat format;
+		ImageUsageFlags usage;
+		VkImageLayout current_layout;
+		VkImageAspectFlags aspect;
 	};
 
-	VkImage image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
-	VkDeviceMemory image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
-	VkImageView image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
-	void image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size);
-	void transition_image_layout(VkImage image, VkFormat, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
+	VkImage vulkan_image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
+	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
+	VkImageView vulkan_image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
+	void vulkan_image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size);
+	void transition_image_layout(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
@@ -292,23 +374,22 @@ private:
 		VkDescriptorSet descriptor_set;
 	};
 
-	// Draw Call
-	struct DrawCall {
-		PipelineId pipeline;
-		BufferId vertex_buffer;
-		BufferId index_buffer;
-		std::vector<UniformSetId> uniform_sets;
+private:
+	struct StagingBuffer {
+		VkBuffer buffer;
+		VkDeviceMemory memory;
 	};
 
-	void find_depth_format();
-	void create_depth_resources();
-	void destroy_depth_resources();
-	void create_render_pass();
-	void create_framebuffer();
-	void destroy_framebuffer();
+	struct Frame {
+		VkCommandPool command_pool;
+		VkCommandBuffer setup_buffer;
+		VkCommandBuffer draw_buffer;
+		std::vector<StagingBuffer> staging_buffers;
+	};
 
-private:
 	VulkanContext* m_context;
+	std::vector<Frame> m_frames;
+	uint32_t m_frame_index;
 
 	std::vector<Shader> m_shaders;
 	std::vector<Pipeline> m_pipelines;
@@ -317,13 +398,4 @@ private:
 	std::vector<Sampler> m_samplers;
 	std::map<DescriptorPoolKey, std::vector<DescriptorPool>> m_descriptor_pools;
 	std::vector<UniformSet> m_uniform_sets;
-
-	std::vector<DrawCall> m_draw_calls;
-
-	// TODO: Delete these lines
-	VkFormat m_depth_format;
-	std::vector<Image> m_depth_images;
-	VkRenderPass m_default_render_pass;
-	std::vector<VkFramebuffer> m_default_framebuffers;
-	// Delete down here
 };

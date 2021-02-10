@@ -3,20 +3,111 @@
 #include <spirv_reflect.h>
 
 #include <algorithm>
+#include <utility>
 #include <stdexcept>
 
 static uint32_t vk_format_to_size(VkFormat format) {
 	switch (format) {
+	case VK_FORMAT_R8G8B8A8_SRGB:		return 4 * 1;
 	case VK_FORMAT_R32_SFLOAT:			return 1 * 4;
 	case VK_FORMAT_R32G32_SFLOAT:		return 2 * 4;
 	case VK_FORMAT_R32G32B32_SFLOAT:	return 3 * 4;
 	case VK_FORMAT_R32G32B32A32_SFLOAT: return 4 * 4;
+	case VK_FORMAT_D24_UNORM_S8_UINT:	return 1 * 3 + 1 * 1;
+	case VK_FORMAT_D32_SFLOAT:			return 1;
+	case VK_FORMAT_D32_SFLOAT_S8_UINT:	return 1 * 4 + 1 * 1;
 	}
 
 	throw std::runtime_error("Unknown format");
 }
 
-static VkAccessFlags get_access_flags(VkImageLayout layout) {
+static bool format_has_stencil(VkFormat format) {
+	switch (format) {
+	case VK_FORMAT_S8_UINT:
+	case VK_FORMAT_D16_UNORM_S8_UINT:
+	case VK_FORMAT_D24_UNORM_S8_UINT:
+	case VK_FORMAT_D32_SFLOAT_S8_UINT:
+		return true;
+	default:
+		return false;
+	}
+}
+
+std::pair<VkPipelineStageFlags, VkAccessFlags> image_layout_to_pipeline_stages_and_access(VkImageLayout layout) {
+	VkPipelineStageFlags stages = 0;
+	VkAccessFlags access = 0;
+	
+	if (layout == VK_IMAGE_LAYOUT_UNDEFINED) {
+		stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_GENERAL) {
+		stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		access =
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_WRITE_BIT |
+			VK_ACCESS_HOST_READ_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		access = VK_ACCESS_MEMORY_READ_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL || layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		access = VK_ACCESS_MEMORY_READ_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_PREINITIALIZED) {
+		throw std::runtime_error("Image layout not supported");
+	} else {
+		throw std::runtime_error("Image layout not supported");
+	}
+
+	return std::make_pair(stages, access);
+}
+
+static VkImageAspectFlags vk_format_to_aspect(VkFormat format) {
+	VkImageAspectFlags aspect = 0;
+
+	switch (format) {
+	case VK_FORMAT_D32_SFLOAT_S8_UINT:
+	case VK_FORMAT_D24_UNORM_S8_UINT:
+		aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+	case VK_FORMAT_D32_SFLOAT:
+		aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
+		break;
+	default:
+		aspect |= VK_IMAGE_ASPECT_COLOR_BIT;
+	}
+
+	return aspect;
+}
+
+static VkPipelineStageFlags image_usage_to_pipeline_stage(ImageUsageFlags usage) {
+	VkPipelineStageFlags stages = 0;
+
+	if (usage & ImageUsageTransferSrc)
+		stages |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+	if (usage & ImageUsageTransferDst)
+		stages |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+	if (usage & ImageUsageCPUVisible)
+		stages |= VK_PIPELINE_STAGE_HOST_BIT;
+	if (usage & ImageUsageSampled)
+		stages |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	if (usage & ImageUsageDepthStencilAttachment)
+		stages |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	if (usage & ImageUsageColorAttachment)
+		stages |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+	return stages;
+}
+
+/*static VkAccessFlags get_access_flags(VkImageLayout layout) {
 	switch (layout) {
 	case VK_IMAGE_LAYOUT_UNDEFINED:
 		return 0;
@@ -44,7 +135,7 @@ static VkAccessFlags get_access_flags(VkImageLayout layout) {
 	}
 
 	throw std::runtime_error("Image layout not supported");
-}
+}*/
 
 static VkPipelineStageFlags get_pipeline_stage_flags(VkImageLayout layout) {
 	switch (layout) {
@@ -76,23 +167,54 @@ static VkPipelineStageFlags get_pipeline_stage_flags(VkImageLayout layout) {
 void VulkanGraphicsController::create(VulkanContext* context) {
 	m_context = context;
 
-	find_depth_format();
+	uint32_t frame_count = m_context->swapchain_image_count() + 1;
+	m_frames.resize(frame_count);
 
-	create_depth_resources();
+	VkCommandPoolCreateInfo command_pool_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.queueFamilyIndex = m_context->graphics_queue_index()
+	};
 
-	create_render_pass();
+	VkCommandBufferAllocateInfo command_buffer_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1
+	};
 
-	create_framebuffer();
+	VkFenceCreateInfo fence_info{
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT
+	};
+
+	VkDevice device = m_context->device();
+	for (uint32_t i = 0; i < frame_count; i++) {
+		if (vkCreateCommandPool(device, &command_pool_info, nullptr, &m_frames[i].command_pool) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create command pool");
+		
+		command_buffer_info.commandPool = m_frames[i].command_pool;
+		if (vkAllocateCommandBuffers(device, &command_buffer_info, &m_frames[i].setup_buffer) != VK_SUCCESS ||
+			vkAllocateCommandBuffers(device, &command_buffer_info, &m_frames[i].draw_buffer) != VK_SUCCESS)
+			throw std::runtime_error("Failed to allocate command buffers");
+	}
+
+	m_frame_index = 0;
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+	};
+
+	vkBeginCommandBuffer(m_frames[m_frame_index].setup_buffer, &begin_info);
+	vkBeginCommandBuffer(m_frames[m_frame_index].draw_buffer, &begin_info);
 }
 
 void VulkanGraphicsController::destroy() {
-	
+	m_context->sync();
+
+	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
+	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
 
 	VkDevice device = m_context->device();
-
-	destroy_framebuffer();
-	vkDestroyRenderPass(device, m_default_render_pass, nullptr);
-	destroy_depth_resources();
 
 	for (Buffer& buffer : m_buffers) {
 		vkFreeMemory(device, buffer.memory, nullptr);
@@ -124,88 +246,329 @@ void VulkanGraphicsController::destroy() {
 		vkDestroyPipeline(device, pipeline.pipeline, nullptr);
 	}
 	m_pipelines.clear();
+
+	for (Frame& frame : m_frames) {
+		vkDestroyCommandPool(device, frame.command_pool, nullptr);
+	}
 }
 
 void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
-	destroy_framebuffer();
-	destroy_depth_resources();
-
+	
 	m_context->resize(width, height);
 
-	create_depth_resources();
-	create_framebuffer();
 }
 
-void VulkanGraphicsController::begin_frame() {
-	m_draw_calls.clear();
+void VulkanGraphicsController::draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count) {
+	const Framebuffer& framebuffer = m_framebuffers[framebuffer_id];
+
+	VkRenderPassBeginInfo render_pass_begin_info{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = framebuffer.render_pass,
+		.framebuffer = framebuffer.framebuffer,
+		.renderArea = { { 0, 0 }, framebuffer.extent },
+		.clearValueCount = count,
+		.pClearValues = (VkClearValue*)clear_colors
+	};
+	
+	vkCmdBeginRenderPass(m_frames[m_frame_index].draw_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
 }
 
-void VulkanGraphicsController::submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets) {
-	// TODO: Add support for uniform sets
-	m_draw_calls.emplace_back(pipeline_id, vertex_id, index_id, uniform_sets);
+void VulkanGraphicsController::draw_end() {
+	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
+}
+
+void VulkanGraphicsController::draw_begin_for_screen(glm::vec4 clear_color) {
+	VkClearValue clear_value{ clear_color.r, clear_color.g, clear_color.b, clear_color.a };
+	
+	VkRenderPassBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = m_context->swapchain_render_pass(),
+		.framebuffer = m_context->swapchain_framebuffer(),
+		.renderArea = { {0, 0}, m_context->swapchain_extent() },
+		.clearValueCount = 1,
+		.pClearValues = &clear_value
+	};
+	
+	vkCmdBeginRenderPass(m_frames[m_frame_index].draw_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+}
+
+void VulkanGraphicsController::draw_end_for_screen() {
+	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
 }
 
 void VulkanGraphicsController::end_frame() {
-	VkCommandBuffer draw_buffer = m_context->draw_command_buffer();
-
-	std::array<VkClearValue, 2> clear_values;
-	// Color attachment
-	clear_values[0].color = { 1.0f, 0.0f, 1.0f, 1.0f };
-	// Depth attachment
-	clear_values[1].depthStencil = { 1.0f, 0 };
-
-	VkRenderPassBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-		.renderPass = m_default_render_pass,
-		.framebuffer = m_default_framebuffers[m_context->image_index()],
-		.renderArea = { .extent = m_context->swapchain_extent() },
-		.clearValueCount = (uint32_t)clear_values.size(),
-		.pClearValues = clear_values.data()
-	};
-
-	vkCmdBeginRenderPass(draw_buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
+	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
 	
-	VkViewport viewport{
-		.x = 0,
-		.y = 0,
-		.width = (float)m_context->swapchain_extent().width,
-		.height = (float)m_context->swapchain_extent().height,
-		.minDepth = 0.0f,
-		.maxDepth = 1.0f
+	m_context->swap_buffers(m_frames[m_frame_index].setup_buffer, m_frames[m_frame_index].draw_buffer);
+
+	m_frame_index = (m_frame_index + 1) % m_frames.size();
+
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	VkRect2D scissor{
-		.offset = { 0, 0 },
-		.extent = m_context->swapchain_extent()
+	vkBeginCommandBuffer(m_frames[m_frame_index].setup_buffer, &begin_info);
+	vkBeginCommandBuffer(m_frames[m_frame_index].draw_buffer, &begin_info);
+}
+
+RenderPassId VulkanGraphicsController::render_pass_create(RenderPassAttachment* attachments, uint32_t count) {
+	RenderPass render_pass;
+	render_pass.attachments.reserve(count);
+
+	std::vector<VkAttachmentDescription> attachment_descriptions;
+	attachment_descriptions.reserve(count);
+	std::vector<VkAttachmentReference> color_attachments;
+	std::vector<VkAttachmentReference> depth_stencil_attachments;
+	// TODO: Resolve attachment support
+	std::vector<VkAttachmentReference> resolve_attachments;
+
+	VkSubpassDependency external_to_subpass{
+		.srcSubpass = VK_SUBPASS_EXTERNAL,
+		.dstSubpass = 0
+	};
+	VkSubpassDependency subpass_to_external{
+		.srcSubpass = 0,
+		.dstSubpass = VK_SUBPASS_EXTERNAL
 	};
 
-	vkCmdSetViewport(draw_buffer, 0, 1, &viewport);
-	vkCmdSetScissor(draw_buffer, 0, 1, &scissor);
+	for (uint32_t i = 0; i < count; i++) {
+		const RenderPassAttachment& attachment = attachments[i];
 
-	for (DrawCall& draw_call : m_draw_calls) {
-		vkCmdBindPipeline(draw_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[draw_call.pipeline].pipeline);
-		VkBuffer vertex_buffers[1] = { m_buffers[draw_call.vertex_buffer].buffer };
-		VkDeviceSize offsets[1] = { 0 };
-		vkCmdBindVertexBuffers(draw_buffer, 0, 1, vertex_buffers, offsets);
-		vkCmdBindIndexBuffer(draw_buffer, m_buffers[draw_call.index_buffer].buffer, 0, m_buffers[draw_call.index_buffer].index.index_type);
-		for (UniformSetId set_id : draw_call.uniform_sets) {
-			UniformSet& uniform_set = m_uniform_sets[set_id];
+		InitialAction init_action = attachments[i].initial_action;
+		FinalAction final_action = attachments[i].final_action;
 
-			vkCmdBindDescriptorSets(
-				draw_buffer,
-				VK_PIPELINE_BIND_POINT_GRAPHICS,
-				m_shaders[uniform_set.shader].pipeline_layout,
-				uniform_set.set_idx,
-				1,
-				&uniform_set.descriptor_set,
-				0, nullptr);
+		VkAttachmentDescription attachment_description{
+			.format = (VkFormat)attachment.format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = (VkAttachmentLoadOp)init_action,
+			.storeOp = (VkAttachmentStoreOp)final_action,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE
+		};
+
+		VkAttachmentReference attachment_reference{
+			.attachment = i,
+			.layout = (attachment.usage & ImageUsageColorAttachment) ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+		};
+	
+		RenderPassAttachmentInfo render_pass_attachment_info{
+			.attachment = attachment
+		};
+
+		if (attachment.usage & ImageUsageSampled) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcAccessMask |= access;
+
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
 		}
-		vkCmdDrawIndexed(draw_buffer, m_buffers[draw_call.index_buffer].index.index_count, 1, 0, 0, 0);
+		if (attachment.usage & ImageUsageTransferSrc) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			VkAccessFlags access = VK_ACCESS_TRANSFER_READ_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcAccessMask |= access;
+
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
+		}
+		if (attachment.usage & ImageUsageTransferDst) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			VkAccessFlags access = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcAccessMask |= access;
+
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
+		}
+		if (attachment.usage & ImageUsageCPUVisible) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_HOST_BIT;
+			VkAccessFlags access = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcStageMask |= access;
+
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
+		}
+
+		if (attachment.usage & ImageUsageColorAttachment) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			VkAccessFlags access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcAccessMask |= access;
+			external_to_subpass.dstStageMask |= stages;
+			external_to_subpass.dstAccessMask |= access;
+
+			subpass_to_external.srcStageMask |= stages;
+			subpass_to_external.srcAccessMask |= access;
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
+
+			if (init_action == InitialAction::Clear || init_action == InitialAction::DontCare) {
+				attachment_description.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+				render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			} else {
+				if (attachment.usage & ImageUsageSampled) {
+					attachment_description.initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+					render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				} else {
+					attachment_description.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+					render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				}
+			}
+
+			if (final_action == FinalAction::DontCare) {
+				attachment_description.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+				render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			} else {
+				if (attachment.usage & ImageUsageSampled) {
+					attachment_description.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+					render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				} else {
+					attachment_description.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+					render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				}
+			}
+
+			color_attachments.push_back(attachment_reference);
+		} else if (attachment.usage & ImageUsageDepthStencilAttachment) {
+			VkPipelineStageFlags stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+			VkAccessFlags access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+			external_to_subpass.srcStageMask |= stages;
+			external_to_subpass.srcAccessMask |= access;
+			external_to_subpass.dstStageMask |= stages;
+			external_to_subpass.dstAccessMask |= access;
+
+			subpass_to_external.srcStageMask |= stages;
+			subpass_to_external.srcAccessMask |= access;
+			subpass_to_external.dstStageMask |= stages;
+			subpass_to_external.dstAccessMask |= access;
+
+			if (format_has_stencil((VkFormat)attachment.format)) {
+				attachment_description.stencilLoadOp = (VkAttachmentLoadOp)init_action;
+				attachment_description.stencilStoreOp = (VkAttachmentStoreOp)final_action;
+			}
+			
+			if (init_action == InitialAction::Clear || init_action == InitialAction::DontCare) {
+				attachment_description.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+				render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			} else {
+				if (attachment.usage & ImageUsageSampled) {
+					attachment_description.initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+					render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				} else {
+					attachment_description.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+					render_pass_attachment_info.initial_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+				}
+			}
+			
+			if (final_action == FinalAction::DontCare) {
+				attachment_description.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+				render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+			} else {
+				if (attachment.usage & ImageUsageSampled) {
+					attachment_description.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+					render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				} else {
+					attachment_description.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+					render_pass_attachment_info.final_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+				}
+			}
+
+			depth_stencil_attachments.push_back(attachment_reference);
+		} else
+			throw std::runtime_error("Invalid image usage");
+
+		attachment_descriptions.push_back(attachment_description);
+		render_pass.attachments.push_back(render_pass_attachment_info);
 	}
 
-	vkCmdEndRenderPass(draw_buffer);
+	if (depth_stencil_attachments.size() != 1) throw std::runtime_error("Render pass supports only one depth stencil attachment");
+
+	VkSubpassDescription subpass{
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = (uint32_t)color_attachments.size(),
+		.pColorAttachments = color_attachments.data(),
+		.pResolveAttachments = resolve_attachments.data(),
+		.pDepthStencilAttachment = depth_stencil_attachments.data()
+	};
 	
-	m_context->swap_buffers();
+	VkSubpassDependency dependencies[2] = { external_to_subpass, subpass_to_external };
+
+	VkRenderPassCreateInfo render_pass_info{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = (uint32_t)attachment_descriptions.size(),
+		.pAttachments = attachment_descriptions.data(),
+		.subpassCount = 1,
+		.pSubpasses = &subpass,
+		.dependencyCount = 2,
+		.pDependencies = dependencies
+	};
+	
+	if (vkCreateRenderPass(m_context->device(), &render_pass_info, nullptr, &render_pass.render_pass) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create framebuffer render pass");
+
+	m_render_passes.push_back(render_pass);
+	return (RenderPassId)m_render_passes.size() - 1;
+}
+
+FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count) {
+	RenderPass& render_pass = m_render_passes[render_pass_id];
+
+	uint32_t width = m_images[ids[0]].extent.width;
+	uint32_t height = m_images[ids[0]].extent.height;
+
+	Framebuffer framebuffer{
+		.render_pass_id = render_pass_id,
+		.render_pass = render_pass.render_pass,
+		.extent = { width, height }
+	};
+
+	std::vector<VkImageView> views;
+	views.reserve(count);
+
+	framebuffer.attachments.reserve(count);
+	for (uint32_t i = 0; i < count; i++) {
+		framebuffer.attachments.push_back(ids[i]);
+		views.push_back(m_images[ids[i]].view);
+	}
+
+	VkFramebufferCreateInfo framebuffer_info{
+		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+		.renderPass = framebuffer.render_pass,
+		.attachmentCount = count,
+		.pAttachments = views.data(),
+		.width = width,
+		.height = height,
+		.layers = 1
+	};
+	
+	if (vkCreateFramebuffer(m_context->device(), &framebuffer_info, nullptr, &framebuffer.framebuffer) != VK_SUCCESS)
+		throw std::runtime_error("Failed to create framebuffer");
+
+	m_framebuffers.push_back(std::move(framebuffer));
+	return (FramebufferId)m_framebuffers.size() - 1;
 }
 
 ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv) {
@@ -481,7 +844,7 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.pColorBlendState = &color_blend_state,
 		.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
-		.renderPass = m_default_render_pass,
+		//.renderPass = m_default_render_pass,
 		.subpass = 0
 	};
 	
@@ -542,35 +905,58 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 }
 
 void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
-	Buffer& buffer = m_buffers[buffer_id];
+	//Buffer& buffer = m_buffers[buffer_id];
 
-	buffer_copy(buffer.buffer, data, buffer.size);
+	//buffer_copy(buffer.buffer, data, buffer.size);
 }
 
-TextureId VulkanGraphicsController::texture_create(const void* data, uint32_t width, uint32_t height) {
-	VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
-	VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags usage, Format format, uint32_t width, uint32_t height) {
+	VkFormat vk_format = (VkFormat)format;
+	VkImageAspectFlags aspect = 0;
+	VkImageUsageFlags vk_usage = 0;
+	VkDeviceSize size = vk_format_to_size(vk_format) * width * height;
+
+	if (usage & ImageUsageDepthStencilAttachment) {
+		aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
+
+		if (format_has_stencil(vk_format))
+			aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+	} else
+		aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
+	VkMemoryPropertyFlags mem_props = usage & ImageUsageCPUVisible
+		? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+		: VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
 	Image image{
-		.image = image_create({ width, height }, format, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT),
-		.memory = image_allocate(image.image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-		.view = image_view_create(image.image, format, aspect),
+		.image = vulkan_image_create({ width, height }, vk_format, (VkImageUsageFlags)usage),
+		.memory = vulkan_image_allocate(image.image, mem_props),
+		.view = vulkan_image_view_create(image.image, vk_format, aspect),
 		.extent = { width, height },
-		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
-		.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		.format = vk_format,
+		.usage = usage,
+		.current_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.aspect = aspect
 	};
 
-	VkDeviceSize size = width * height * 4;
-
-	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-	image_copy(image.image, { width, height }, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
-
-	transition_image_layout(image.image, format, aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.layout);
-
 	m_images.push_back(image);
+	ImageId image_id = (ImageId)m_images.size() - 1;
 
-	return (TextureId)m_images.size() - 1;
+	if (data)
+		image_update(image_id, data, size);
+
+	return image_id;
+}
+
+void VulkanGraphicsController::image_update(ImageId image_id, const void* data, size_t size) {
+	Image& image = m_images[image_id];
+
+	if (image.current_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		image.current_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	}
+
+	vulkan_image_copy(image.image, image.extent, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -649,6 +1035,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 
 			break;
 		}
+		/*
 		case UniformType::SampledImage: {
 			std::vector<VkDescriptorImageInfo> image_infos;
 
@@ -657,7 +1044,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 
 				VkDescriptorImageInfo image_info{
 					.imageView = image.view,
-					.imageLayout = image.layout
+					.imageLayout = image.current_layout
 				};
 
 				image_infos.push_back(image_info);
@@ -671,16 +1058,22 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 
 			break;
 		}
+		*/
 		case UniformType::CombinedImageSampler: {
 			std::vector<VkDescriptorImageInfo> image_infos;
 
 			for (size_t i = 0; i < uniform.ids.size(); i += 2) {
 				Image& image = m_images[uniform.ids[i]];
 
+				if (image.current_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+					transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					image.current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				}
+
 				VkDescriptorImageInfo image_info{
 					.sampler = m_samplers[uniform.ids[i + 1]].sampler,
 					.imageView = image.view,
-					.imageLayout = image.layout
+					.imageLayout = image.current_layout
 				};
 
 				image_infos.push_back(image_info);
@@ -780,18 +1173,16 @@ void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, Vk
 	memcpy(staging_data, data, size);
 	vkUnmapMemory(m_context->device(), staging_memory);
 
-	VkCommandBuffer mem_buffer = m_context->memory_command_buffer();
-
 	VkBufferCopy region{
 		.size = size
 	};
 
-	vkCmdCopyBuffer(mem_buffer, staging_buffer, buffer, 1, &region);
+	vkCmdCopyBuffer(m_frames[m_frame_index].draw_buffer, staging_buffer, buffer, 1, &region);
 
-	m_context->submit_staging_buffer(staging_buffer, staging_memory);
+	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
 }
 
-VkImage VulkanGraphicsController::image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
+VkImage VulkanGraphicsController::vulkan_image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
 	VkImageCreateInfo image_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
@@ -813,7 +1204,7 @@ VkImage VulkanGraphicsController::image_create(VkExtent2D extent, VkFormat forma
 	return image;
 }
 
-VkDeviceMemory VulkanGraphicsController::image_allocate(VkImage image, VkMemoryPropertyFlags mem_props) {
+VkDeviceMemory VulkanGraphicsController::vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props) {
 	VkMemoryRequirements mem_reqs;
 	vkGetImageMemoryRequirements(m_context->device(), image, &mem_reqs);
 	
@@ -832,7 +1223,7 @@ VkDeviceMemory VulkanGraphicsController::image_allocate(VkImage image, VkMemoryP
 	return memory;
 }
 
-VkImageView VulkanGraphicsController::image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect) {
+VkImageView VulkanGraphicsController::vulkan_image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect) {
 	VkImageViewCreateInfo view_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = image,
@@ -848,7 +1239,7 @@ VkImageView VulkanGraphicsController::image_view_create(VkImage image, VkFormat 
 	return image_view;
 }
 
-void VulkanGraphicsController::image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size) {
+void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size) {
 	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
 	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
@@ -857,25 +1248,24 @@ void VulkanGraphicsController::image_copy(VkImage image, VkExtent2D extent, VkIm
 	memcpy(staging_data, data, size);
 	vkUnmapMemory(m_context->device(), staging_memory);
 
-	VkCommandBuffer com_buffer = m_context->memory_command_buffer();
-
 	VkBufferImageCopy region{
 		.imageSubresource = { aspect, 0, 0, 1 },
 		.imageExtent = { extent.width, extent.height, 1 }
 	};
 
-	vkCmdCopyBufferToImage(com_buffer, staging_buffer, image, layout, 1, &region);
+	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer, image, layout, 1, &region);
 
-	m_context->submit_staging_buffer(staging_buffer, staging_memory);
+	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
 }
 
-void VulkanGraphicsController::transition_image_layout(VkImage image, VkFormat, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
-	VkCommandBuffer com_buffer = m_context->memory_command_buffer();
+void VulkanGraphicsController::transition_image_layout(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
+	auto [src_stages, src_access] = image_layout_to_pipeline_stages_and_access(old_layout);
+	auto [dst_stages, dst_access] = image_layout_to_pipeline_stages_and_access(new_layout);
 
 	VkImageMemoryBarrier barrier{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = get_access_flags(old_layout),
-		.dstAccessMask = get_access_flags(new_layout),
+		.srcAccessMask = src_access,
+		.dstAccessMask = dst_access,
 		.oldLayout = old_layout,
 		.newLayout = new_layout,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -884,8 +1274,9 @@ void VulkanGraphicsController::transition_image_layout(VkImage image, VkFormat, 
 		.subresourceRange = { aspect, 0, 1, 0, 1 }
 	};
 
-	vkCmdPipelineBarrier(com_buffer,
-		get_pipeline_stage_flags(old_layout), get_pipeline_stage_flags(new_layout),
+	vkCmdPipelineBarrier(
+		m_frames[m_frame_index].draw_buffer,
+		src_stages, dst_stages,
 		0,
 		0, nullptr,
 		0, nullptr,
@@ -978,161 +1369,4 @@ uint32_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPool
 
 void VulkanGraphicsController::descriptor_pools_free() {
 
-}
-
-void VulkanGraphicsController::find_depth_format() {
-	VkPhysicalDevice physical_device = m_context->physical_device();
-	
-	VkFormat desirable_depth_format = VK_FORMAT_D32_SFLOAT;
-	VkFormatFeatureFlags format_features = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-
-	VkFormatProperties format_props;
-	vkGetPhysicalDeviceFormatProperties(physical_device, desirable_depth_format, &format_props);
-	if (format_props.optimalTilingFeatures & format_features) {
-		m_depth_format = desirable_depth_format;
-		return;
-	}
-
-	desirable_depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
-	vkGetPhysicalDeviceFormatProperties(physical_device, desirable_depth_format, &format_props);
-	if (format_props.optimalTilingFeatures & format_features) {
-		m_depth_format = desirable_depth_format;
-		return;
-	}
-
-	desirable_depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
-	vkGetPhysicalDeviceFormatProperties(physical_device, desirable_depth_format, &format_props);
-	if (format_props.optimalTilingFeatures & format_features) {
-		m_depth_format = desirable_depth_format;
-		return;
-	}
-
-	throw std::runtime_error("Failed to find depth format");
-}
-
-void VulkanGraphicsController::create_depth_resources() {
-	m_depth_images.resize(m_context->swapchain_image_count());
-
-	VkExtent2D depth_extent = m_context->swapchain_extent();
-	VkFormat depth_format = m_depth_format;
-	VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-	if (depth_format == VK_FORMAT_D24_UNORM_S8_UINT || depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT)
-		aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-	for (Image& image : m_depth_images) {
-		image.extent = depth_extent;
-		image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-		image.image = image_create(depth_extent, depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-		image.memory = image_allocate(image.image, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
-		image.view = image_view_create(image.image, depth_format, aspect);
-	}
-}
-
-void VulkanGraphicsController::destroy_depth_resources() {
-	VkDevice device = m_context->device();
-
-	for (Image& image : m_depth_images) {
-		vkDestroyImageView(device, image.view, nullptr);
-		vkDestroyImage(device, image.image, nullptr);
-		vkFreeMemory(device, image.memory, nullptr);
-	}
-}
-
-void VulkanGraphicsController::create_render_pass() {
-	VkAttachmentDescription color_attachment{
-		.format = m_context->swapchain_format(),
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-	};
-
-	VkAttachmentDescription depth_attachment{
-		.format = m_depth_format,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-	};
-
-	VkAttachmentReference color_attachment_ref{
-		.attachment = 0,
-		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-	};
-
-	VkAttachmentReference depth_attachment_ref{
-		.attachment = 1,
-		.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-	};
-
-	VkSubpassDescription subpass{
-		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-		.colorAttachmentCount = 1,
-		.pColorAttachments = &color_attachment_ref,
-		.pDepthStencilAttachment = &depth_attachment_ref
-	};
-
-	VkSubpassDependency dependency{
-		.srcSubpass = VK_SUBPASS_EXTERNAL,
-		.dstSubpass = 0,
-		.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-	};
-
-	std::array<VkAttachmentDescription, 2> attachments{
-		color_attachment,
-		depth_attachment
-	};
-
-	VkRenderPassCreateInfo render_pass_info{
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = (uint32_t)attachments.size(),
-		.pAttachments = attachments.data(),
-		.subpassCount = 1,
-		.pSubpasses = &subpass,
-		.dependencyCount = 1,
-		.pDependencies = &dependency
-	};
-
-	vkCreateRenderPass(m_context->device(), &render_pass_info, nullptr, &m_default_render_pass);
-}
-
-void VulkanGraphicsController::create_framebuffer() {
-	uint32_t framebuffer_count = m_context->swapchain_image_count();
-	m_default_framebuffers.resize(framebuffer_count);
-
-	VkFramebufferCreateInfo framebuffer_info{
-		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-		.renderPass = m_default_render_pass,
-		.attachmentCount = 2,
-		.width = m_context->swapchain_extent().width,
-		.height = m_context->swapchain_extent().height,
-		.layers = 1
-	};
-
-	for (uint32_t i = 0; i < framebuffer_count; i++) {
-		std::array<VkImageView, 2> views = {
-			m_context->swapchain_image_views()[i],
-			m_depth_images[i].view
-		};
-
-		framebuffer_info.pAttachments = views.data();
-
-		vkCreateFramebuffer(m_context->device(), &framebuffer_info, nullptr, &m_default_framebuffers[i]);
-	}
-}
-
-void VulkanGraphicsController::destroy_framebuffer() {
-	for (VkFramebuffer framebuffer : m_default_framebuffers)
-		vkDestroyFramebuffer(m_context->device(), framebuffer, nullptr);
-
-	m_default_framebuffers.clear();
 }

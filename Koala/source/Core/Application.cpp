@@ -17,37 +17,31 @@ Application::Application(const ApplicationProperties& props) {
 	window_props.callback = ([this](Event& e) { this->on_event(e); });
 
 	m_window.initialize(window_props);
+	m_graphics_controller.create(m_window.context());
 
-	//float vertices[] = {
-	//	-0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-	//	 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-	//	 0.0f,  0.5f, 0.5f, 1.0f, 0.0f, 0.0f,
-	//	-0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-	//	 0.5f,  0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-	//	 0.0f, -0.5f, 0.7f, 0.0f, 1.0f, 0.0f,
-	//	-0.5f, -0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-	//	-0.5f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-	//	 0.0f,  0.5f, 0.6f, 0.0f, 0.0f, 1.0f,
-	//};
-	//
-	//uint32_t indices1[] = {
-	//	0, 1, 2
-	//};
-	//
-	//uint32_t indices2[] = {
-	//	3, 4, 5
-	//};
-	//
-	//uint32_t indices3[] = {
-	//	6, 7, 8
-	//};
+	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment, Format::RGBA32_SFloat, m_window.width(), m_window.height());
+	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_window.width(), m_window.height());
+
+	std::array<RenderPassAttachment, 2> attachments{};
+	attachments[0].format = Format::RGBA32_SFloat;
+	attachments[0].usage = ImageUsageColorAttachment;
+	attachments[0].initial_action = InitialAction::Clear;
+	attachments[0].final_action = FinalAction::Store;
+	attachments[1].format = Format::D32_SFloat;
+	attachments[1].usage = ImageUsageDepthStencilAttachment;
+	attachments[1].initial_action = InitialAction::Clear;
+	attachments[1].final_action = FinalAction::DontCare;
+
+	m_render_pass = m_graphics_controller.render_pass_create(attachments.data(), (uint32_t)attachments.size());
+	
+	ImageId ids[2] = { m_color_attachment, m_depth_attachment };
+
+	m_framebuffer = m_graphics_controller.framebuffer_create(m_render_pass, ids, 2);
 
 	m_mvp.model = glm::mat4(1);
 	m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
 	m_mvp.proj[1][1] *= -1;
-
-	m_graphics_controller.create(m_window.context());
 
 	auto load_spv = [](const std::filesystem::path& path) -> std::vector<uint8_t> {
 		if (!std::filesystem::exists(path))
@@ -80,7 +74,7 @@ Application::Application(const ApplicationProperties& props) {
 	pipeline_info.raster.depth_bias_enable = false;
 	pipeline_info.raster.line_width = 1.0f;
 
-	m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
+	//m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
 
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
@@ -116,8 +110,8 @@ Application::Application(const ApplicationProperties& props) {
 		}
 	}
 
-	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
-	m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), IndexType::Uint32);
+	//m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
+	//m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), IndexType::Uint32);
 
 	//m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
 	//m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
@@ -130,13 +124,13 @@ Application::Application(const ApplicationProperties& props) {
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 	
-	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
+//	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
 	
-	m_texture = m_graphics_controller.texture_create(pixels, width, height);
+	//m_texture = m_graphics_controller.image_create(pixels, ImageUsageSampled | ImageUsageTransferDst, Format::RGBA8_SRGB, width, height);
 	
 	SamplerInfo sampler_info{};
 
-	m_sampler = m_graphics_controller.sampler_create(sampler_info);
+	//m_sampler = m_graphics_controller.sampler_create(sampler_info);
 
 	std::vector<Uniform> uniform_set0;
 	uniform_set0.reserve(1);
@@ -158,8 +152,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	uniform_set1.push_back(std::move(texture));
 
-	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_shader, 0, uniform_set0);
-	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_shader, 1, uniform_set1);
+	//m_uniform_set0 = m_graphics_controller.uniform_set_create(m_shader, 0, uniform_set0);
+	//m_uniform_set1 = m_graphics_controller.uniform_set_create(m_shader, 1, uniform_set1);
 }
 
 Application::~Application() {
@@ -198,6 +192,8 @@ void Application::on_window_close(WindowCloseEvent& e) {
 
 void Application::on_window_resize(WindowResizeEvent& e) {
 	m_graphics_controller.resize(e.width(), e.height());
+	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
+	m_mvp.proj[1][1] *= -1;
 	//m_renderer.on_resize(e.width(), e.height());
 }
 
@@ -214,36 +210,23 @@ void Application::on_update() {
 
 	m_mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-	m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
-
-	//float value = m_clear_value.color.float32[0];
-
-	//float vertices[] = {
-	//	-0.5f, -0.5f, 0.0f, value, 0.0f, value,
-	//	 0.5f, -0.5f, 0.0f, value, 0.0f, value,
-	//	-0.5f,  0.5f, 0.0f, value, 0.0f, value,
-	//	 0.5f,  0.5f, 0.0f, 1.0f, 1.0f, 1.0f
-	//};
-
+	//m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
 	//m_vertex_buffer->update(vertices, sizeof(vertices));
 
-	//m_clear_value.color.float32[0] += (delta * time_diff);
-	//m_clear_value.color.float32[2] += (delta * time_diff);
-	//
-	//if (m_clear_value.color.float32[0] >= 1.0f) {
-	//	m_clear_value.color.float32[0] = 1.0f;
-	//	m_clear_value.color.float32[2] = 1.0f;
-	//	delta = 0.5f;
-	//} else if (m_clear_value.color.float32[0] <= 0) {
-	//	m_clear_value.color.float32[0] = 0.0f;
-	//	m_clear_value.color.float32[2] = 0.0f;
-	//	delta = -0.5f;
-	//}
-	//
-	//if (m_clear_value.color.float32[0] >= 1.0f || m_clear_value.color.float32[0] <= 0.0f)
-	//	delta = -delta;
-	//
-	//m_prev_time_point = time_point;
+	m_clear_color.r += delta * time_diff;
+	m_clear_color.b += delta * time_diff;
+
+	if (m_clear_color.r >= 1.0f) {
+		m_clear_color.r = 1.0f;
+		m_clear_color.b = 1.0f;
+		delta = -0.5f;
+	} else if (m_clear_color.r <= 0.0f) {
+		m_clear_color.r = 0.0f;
+		m_clear_color.b = 0.0f;
+		delta = 0.5f;
+	}
+	
+	m_prev_time_point = time_point;
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
@@ -252,10 +235,18 @@ void Application::on_update() {
 void Application::on_render() {
 	std::vector<UniformSetId> uniform_sets{ m_uniform_set0, m_uniform_set1 };
 
-	m_graphics_controller.begin_frame();
-	m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, uniform_sets);
+	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, uniform_sets);
 	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, uniform_sets);
 	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, uniform_sets);
+
+	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
+
+	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
+	m_graphics_controller.draw_end();
+
+	m_graphics_controller.draw_begin_for_screen(m_clear_color);
+	m_graphics_controller.draw_end_for_screen();
+	
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)
