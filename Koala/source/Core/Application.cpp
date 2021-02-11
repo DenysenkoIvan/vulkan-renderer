@@ -20,7 +20,7 @@ Application::Application(const ApplicationProperties& props) {
 	m_graphics_controller.create(m_window.context());
 
 	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment, Format::RGBA32_SFloat, m_window.width(), m_window.height());
-	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_window.width(), m_window.height());
+	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment | ImageUsageSampled, Format::D32_SFloat, m_window.width(), m_window.height());
 
 	std::array<RenderPassAttachment, 2> attachments{};
 	attachments[0].format = Format::RGBA32_SFloat;
@@ -61,20 +61,36 @@ Application::Application(const ApplicationProperties& props) {
 		return spv_code;
 	};
 
-	m_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/vertex.spv"), load_spv("../assets/shaders/fragment.spv"));
+	m_hdr_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/vertex.spv"), load_spv("../assets/shaders/fragment.spv"));
 
-	PipelineInfo pipeline_info{};
-	pipeline_info.shader = m_shader;
-	pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
-	pipeline_info.assembly.restart_enable = false;
-	pipeline_info.raster.depth_clamp_enable = false;
-	pipeline_info.raster.rasterizer_discard_enable = false;
-	pipeline_info.raster.polygon_mode = PolygonMode::Fill;
-	pipeline_info.raster.cull_mode = CullMode::None;
-	pipeline_info.raster.depth_bias_enable = false;
-	pipeline_info.raster.line_width = 1.0f;
+	m_display_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/display.vert.spv"), load_spv("../assets/shaders/display.frag.spv"));
 
-	//m_pipeline = m_graphics_controller.pipeline_create(&pipeline_info);
+	PipelineInfo hdr_pipeline_info{};
+	hdr_pipeline_info.shader_id = m_hdr_shader;
+	hdr_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
+	hdr_pipeline_info.assembly.restart_enable = false;
+	hdr_pipeline_info.raster.depth_clamp_enable = false;
+	hdr_pipeline_info.raster.rasterizer_discard_enable = false;
+	hdr_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
+	hdr_pipeline_info.raster.cull_mode = CullMode::None;
+	hdr_pipeline_info.raster.depth_bias_enable = false;
+	hdr_pipeline_info.raster.line_width = 1.0f;
+	hdr_pipeline_info.render_pass_id = m_render_pass;
+
+	m_hdr_pipeline = m_graphics_controller.pipeline_create(&hdr_pipeline_info);
+
+	PipelineInfo display_pipeline_info{};
+	display_pipeline_info.shader_id = m_display_shader;
+	display_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
+	display_pipeline_info.assembly.restart_enable = false;
+	display_pipeline_info.raster.depth_clamp_enable = false;
+	display_pipeline_info.raster.rasterizer_discard_enable = false;
+	display_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
+	display_pipeline_info.raster.cull_mode = CullMode::None;
+	display_pipeline_info.raster.depth_bias_enable = false;
+	display_pipeline_info.raster.line_width = 1.0f;
+
+	m_display_pipeline = m_graphics_controller.pipeline_create(&display_pipeline_info);
 
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
@@ -110,27 +126,24 @@ Application::Application(const ApplicationProperties& props) {
 		}
 	}
 
-	//m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
-	//m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), IndexType::Uint32);
+	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
+	m_index_type = IndexType::Uint32;
+	m_index_count = (uint32_t)m_indices.size();
+	m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), m_index_type);
 
-	//m_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
-	//m_index_buffer1 = m_graphics_controller.index_buffer_create(indices1, sizeof(indices1), IndexType::Uint32);
-	//m_index_buffer2 = m_graphics_controller.index_buffer_create(indices2, sizeof(indices2), IndexType::Uint32);
-	//m_index_buffer3 = m_graphics_controller.index_buffer_create(indices3, sizeof(indices3), IndexType::Uint32);
-	
 	int width = 0, height = 0, channels = 0;
 	stbi_uc* pixels = stbi_load("../assets/models/viking_room.png", &width, &height, &channels, STBI_rgb_alpha);
 	
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 	
-//	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
+	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
 	
-	//m_texture = m_graphics_controller.image_create(pixels, ImageUsageSampled | ImageUsageTransferDst, Format::RGBA8_SRGB, width, height);
+	m_texture = m_graphics_controller.image_create(pixels, ImageUsageSampled | ImageUsageTransferDst, Format::RGBA8_SRGB, width, height);
 	
 	SamplerInfo sampler_info{};
 
-	//m_sampler = m_graphics_controller.sampler_create(sampler_info);
+	m_sampler = m_graphics_controller.sampler_create(sampler_info);
 
 	std::vector<Uniform> uniform_set0;
 	uniform_set0.reserve(1);
@@ -152,8 +165,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	uniform_set1.push_back(std::move(texture));
 
-	//m_uniform_set0 = m_graphics_controller.uniform_set_create(m_shader, 0, uniform_set0);
-	//m_uniform_set1 = m_graphics_controller.uniform_set_create(m_shader, 1, uniform_set1);
+	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_hdr_shader, 0, uniform_set0);
+	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_hdr_shader, 1, uniform_set1);
 }
 
 Application::~Application() {
@@ -233,18 +246,20 @@ void Application::on_update() {
 }
 
 void Application::on_render() {
-	std::vector<UniformSetId> uniform_sets{ m_uniform_set0, m_uniform_set1 };
-
-	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer, uniform_sets);
-	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer2, uniform_sets);
-	//m_graphics_controller.submit(m_pipeline, m_vertex_buffer, m_index_buffer3, uniform_sets);
-
 	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
 
+	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
+
 	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
+	m_graphics_controller.draw_bind_pipeline(m_hdr_pipeline);
+	m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffer);
+	m_graphics_controller.draw_bind_index_buffer(m_index_buffer, m_index_type);
+	m_graphics_controller.draw_bind_uniform_sets(m_hdr_pipeline, sets, 2);
+	m_graphics_controller.draw_draw_indexed(m_index_count);
 	m_graphics_controller.draw_end();
 
 	m_graphics_controller.draw_begin_for_screen(m_clear_color);
+	//m_graphics_controller.draw_bind_pipeline(m_display_pipeline);
 	m_graphics_controller.draw_end_for_screen();
 	
 	m_graphics_controller.end_frame();

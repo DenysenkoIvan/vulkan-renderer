@@ -69,15 +69,15 @@ private:
 	ImageId m_depth_attachment;
 	RenderPassId m_render_pass;
 	FramebufferId m_framebuffer;
+	ShaderId m_hdr_shader;
+	PipelineId m_hdr_pipeline;
+	ShaderId m_display_shader;
+	PipelineId m_display_pipeline;
 
-	ShaderId m_shader;
-	PipelineId m_pipeline;
 	BufferId m_vertex_buffer;
 	BufferId m_index_buffer;
-	//BufferId m_vertex_buffer;
-	//BufferId m_index_buffer1;
-	//BufferId m_index_buffer2;
-	//BufferId m_index_buffer3;
+	IndexType m_index_type;
+	uint32_t m_index_count;
 	BufferId m_uniform_buffer;
 	ImageId m_texture;
 	SamplerId m_sampler;
@@ -89,14 +89,10 @@ private:
 		alignas(16) glm::mat4 view;
 		alignas(16) glm::mat4 proj;
 	};
-
 	
-
 	MVP m_mvp;
 	std::vector<Vertex> m_vertices;
 	std::vector<uint32_t> m_indices;
-
-	//VkClearValue m_clear_value = { 0.1f, 0.0f, 0.1f, 1.0f };
 };
 
 namespace std {

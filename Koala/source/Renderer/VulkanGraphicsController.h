@@ -3,6 +3,7 @@
 #include "VulkanContext.h"
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -109,9 +110,10 @@ struct Rasterization {
 };
 
 struct PipelineInfo {
-	ShaderId shader;
+	ShaderId shader_id;
 	PipelineAssembly assembly;
 	Rasterization raster;
+	std::optional<RenderPassId> render_pass_id;
 };
 
 enum class IndexType : uint32_t {
@@ -193,23 +195,29 @@ public:
 	void destroy();
 
 	void resize(uint32_t width, uint32_t height);
-	
-	//void submit(PipelineId pipeline_id, BufferId vertex_id, BufferId index_id, const std::vector<UniformSetId>& uniform_sets);
 
+	void end_frame();
+	
 	void draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count);
 	void draw_end();
 
 	void draw_begin_for_screen(glm::vec4 clear_colors);
 	void draw_end_for_screen();
 
-	void end_frame();
+	void draw_bind_pipeline(PipelineId pipeline_id);
+	void draw_bind_vertex_buffer(BufferId buffer_id);
+	void draw_bind_index_buffer(BufferId buffer_id, IndexType index_type);
+	void draw_bind_uniform_sets(PipelineId pipeline_id, UniformSetId* set_ids, uint32_t count);
+	void draw_draw_indexed(uint32_t index_count);
 
 	RenderPassId render_pass_create(RenderPassAttachment* attachments, uint32_t count);
 
 	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
 
 	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);	
+	
 	PipelineId pipeline_create(const PipelineInfo* pipeline_info);
+	
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
 	BufferId uniform_buffer_create(const void* data, size_t size);
@@ -283,6 +291,7 @@ private:
 	// Pipeline
 	struct Pipeline {
 		PipelineInfo info;
+		VkPipelineLayout layout;
 		VkPipeline pipeline;
 	};
 
@@ -315,7 +324,8 @@ private:
 	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
 	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
 	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
-	
+	void buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size);
+
 	// Images
 	struct Image {
 		VkImage image;

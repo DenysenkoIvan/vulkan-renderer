@@ -33,7 +33,7 @@ static bool format_has_stencil(VkFormat format) {
 	}
 }
 
-std::pair<VkPipelineStageFlags, VkAccessFlags> image_layout_to_pipeline_stages_and_access(VkImageLayout layout) {
+static std::pair<VkPipelineStageFlags, VkAccessFlags> image_layout_to_pipeline_stages_and_access(VkImageLayout layout) {
 	VkPipelineStageFlags stages = 0;
 	VkAccessFlags access = 0;
 	
@@ -69,6 +69,47 @@ std::pair<VkPipelineStageFlags, VkAccessFlags> image_layout_to_pipeline_stages_a
 	}
 
 	return std::make_pair(stages, access);
+}
+
+static std::pair<VkPipelineStageFlags, VkAccessFlags> buffer_usage_to_pipeline_stages_and_access(VkBufferUsageFlags usage) {
+	VkPipelineStageFlags stages = 0;
+	VkAccessFlags access = 0;
+
+	if (usage & VK_BUFFER_USAGE_TRANSFER_SRC_BIT) {
+		stages |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+		access |= VK_ACCESS_TRANSFER_READ_BIT;
+	}
+	if (usage & VK_BUFFER_USAGE_TRANSFER_DST_BIT) {
+		stages |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+		access |= VK_ACCESS_TRANSFER_WRITE_BIT;
+	}
+	if (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
+		stages |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		access |= VK_ACCESS_UNIFORM_READ_BIT;
+	}
+	if (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) {
+		stages |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+		access |= VK_ACCESS_INDEX_READ_BIT;
+	}
+	if (usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) {
+		stages |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+		access |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+	}
+
+	return std::make_pair(stages, access);
+}
+
+static VkImageLayout image_usage_to_optimal_image_layout(ImageUsageFlags usage) {
+	if (usage & ImageUsageColorAttachment)
+		return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	else if (usage & ImageUsageDepthStencilAttachment)
+		return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	else if (usage & ImageUsageSampled)
+		return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	else if (usage & ImageUsageCPUVisible)
+		return VK_IMAGE_LAYOUT_GENERAL;
+	else
+		return VK_IMAGE_LAYOUT_GENERAL;
 }
 
 static VkImageAspectFlags vk_format_to_aspect(VkFormat format) {
@@ -217,8 +258,8 @@ void VulkanGraphicsController::destroy() {
 	VkDevice device = m_context->device();
 
 	for (Buffer& buffer : m_buffers) {
-		vkFreeMemory(device, buffer.memory, nullptr);
 		vkDestroyBuffer(device, buffer.buffer, nullptr);
+		vkFreeMemory(device, buffer.memory, nullptr);
 	}
 	m_buffers.clear();
 
@@ -227,7 +268,10 @@ void VulkanGraphicsController::destroy() {
 		vkDestroyImage(device, image.image, nullptr);
 		vkFreeMemory(device, image.memory, nullptr);
 	}
-	m_buffers.clear();
+	m_images.clear();
+
+	for (Sampler& sampler : m_samplers)
+		vkDestroySampler(device, sampler.sampler, nullptr);
 
 	for (Shader& shader : m_shaders) {
 		ShaderInfo& info = *shader.info;
@@ -242,14 +286,27 @@ void VulkanGraphicsController::destroy() {
 	}
 	m_shaders.clear();
 
-	for (Pipeline& pipeline : m_pipelines) {
+	for (Pipeline& pipeline : m_pipelines)
 		vkDestroyPipeline(device, pipeline.pipeline, nullptr);
-	}
 	m_pipelines.clear();
 
 	for (Frame& frame : m_frames) {
 		vkDestroyCommandPool(device, frame.command_pool, nullptr);
+
+		for (StagingBuffer& buffer : frame.staging_buffers) {
+			vkDestroyBuffer(device, buffer.buffer, nullptr);
+			vkFreeMemory(device, buffer.memory, nullptr);
+		}
 	}
+	m_frames.clear();
+
+	for (Framebuffer& framebuffer : m_framebuffers)
+		vkDestroyFramebuffer(device, framebuffer.framebuffer, nullptr);
+	m_framebuffers.clear();
+
+	for (RenderPass& render_pass : m_render_passes)
+		vkDestroyRenderPass(device, render_pass.render_pass, nullptr);
+	m_render_passes.clear();
 }
 
 void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
@@ -258,8 +315,41 @@ void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
 
 }
 
+void VulkanGraphicsController::end_frame() {
+	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
+	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
+
+	m_context->swap_buffers(m_frames[m_frame_index].setup_buffer, m_frames[m_frame_index].draw_buffer);
+
+	m_frame_index = (m_frame_index + 1) % m_frames.size();
+
+	VkCommandBufferBeginInfo begin_info{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+	};
+
+	vkBeginCommandBuffer(m_frames[m_frame_index].setup_buffer, &begin_info);
+	vkBeginCommandBuffer(m_frames[m_frame_index].draw_buffer, &begin_info);
+
+	VkDevice device = m_context->device();
+	for (StagingBuffer& buffer : m_frames[m_frame_index].staging_buffers) {
+		vkDestroyBuffer(device, buffer.buffer, nullptr);
+		vkFreeMemory(device, buffer.memory, nullptr);
+	}
+	m_frames[m_frame_index].staging_buffers.clear();
+}
+
 void VulkanGraphicsController::draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count) {
 	const Framebuffer& framebuffer = m_framebuffers[framebuffer_id];
+	const RenderPass& render_pass = m_render_passes[framebuffer.render_pass_id];
+
+	// Transition attchment image layout to its initial layout specified in VkRenderPass instance if it changed
+	for (uint32_t i = 0; i < framebuffer.attachments.size(); i++) {
+		const Image& attachment_image = m_images[framebuffer.attachments[i]];
+
+		if (attachment_image.current_layout != render_pass.attachments[i].initial_layout)
+			transition_image_layout(attachment_image.image, attachment_image.aspect, attachment_image.current_layout, render_pass.attachments[i].initial_layout);
+	}
 
 	VkRenderPassBeginInfo render_pass_begin_info{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -296,21 +386,46 @@ void VulkanGraphicsController::draw_end_for_screen() {
 	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
 }
 
-void VulkanGraphicsController::end_frame() {
-	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
-	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
+void VulkanGraphicsController::draw_bind_pipeline(PipelineId pipeline_id) {
+	const Pipeline& pipeline = m_pipelines[pipeline_id];
+
+	vkCmdBindPipeline(m_frames[m_frame_index].draw_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+}
+
+void VulkanGraphicsController::draw_bind_vertex_buffer(BufferId buffer_id) {
+	Buffer& buffer = m_buffers[buffer_id];
+
+	VkDeviceSize offset = 0;
+	vkCmdBindVertexBuffers(m_frames[m_frame_index].draw_buffer, 0, 1, &buffer.buffer, &offset);
+}
+
+void VulkanGraphicsController::draw_bind_index_buffer(BufferId buffer_id, IndexType index_type) {
+	Buffer& buffer = m_buffers[buffer_id];
+
+	vkCmdBindIndexBuffer(m_frames[m_frame_index].draw_buffer, buffer.buffer, 0, (VkIndexType)index_type);
+}
+
+void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, UniformSetId* set_ids, uint32_t count) {
+	std::vector<VkDescriptorSet> descriptor_sets;
+	descriptor_sets.reserve(count);
 	
-	m_context->swap_buffers(m_frames[m_frame_index].setup_buffer, m_frames[m_frame_index].draw_buffer);
+	for (uint32_t i = 0; i < count; i++) {
+		UniformSet& set = m_uniform_sets[i];
 
-	m_frame_index = (m_frame_index + 1) % m_frames.size();
+		descriptor_sets.push_back(set.descriptor_set);
+	}
 
-	VkCommandBufferBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-	};
+	vkCmdBindDescriptorSets(
+		m_frames[m_frame_index].draw_buffer,
+		VK_PIPELINE_BIND_POINT_GRAPHICS,
+		m_pipelines[pipeline_id].layout,
+		0, count, descriptor_sets.data(),
+		0, nullptr
+	);
+}
 
-	vkBeginCommandBuffer(m_frames[m_frame_index].setup_buffer, &begin_info);
-	vkBeginCommandBuffer(m_frames[m_frame_index].draw_buffer, &begin_info);
+void VulkanGraphicsController::draw_draw_indexed(uint32_t index_count) {
+	vkCmdDrawIndexed(m_frames[m_frame_index].draw_buffer, index_count, 1, 0, 0, 0);
 }
 
 RenderPassId VulkanGraphicsController::render_pass_create(RenderPassAttachment* attachments, uint32_t count) {
@@ -705,7 +820,7 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 		return s0.set < s1.set;
 	});
 
-	// Create VkDescriptorSetLayout's
+	// Create VkDescriptorSetLayouts
 	size_t set_count = shader.info->sets.size();
 
 	shader.info->set_layouts.reserve(set_count);
@@ -747,7 +862,9 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 	Pipeline& pipeline = m_pipelines.back();
 	pipeline.info = *pipeline_info;
 
-	const Shader& shader = m_shaders[pipeline.info.shader];
+	const Shader& shader = m_shaders[pipeline.info.shader_id];
+	
+	pipeline.layout = shader.pipeline_layout;
 
 	VkPipelineInputAssemblyStateCreateInfo assembly_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -842,9 +959,12 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.pMultisampleState = &multisample_state,
 		.pDepthStencilState = &depth_stencil_state,
 		.pColorBlendState = &color_blend_state,
-		.pDynamicState = &dynamic_state,
+		// TODO: Add dynamic states support
+		//.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
-		//.renderPass = m_default_render_pass,
+		.renderPass = pipeline_info->render_pass_id
+			? m_render_passes[pipeline_info->render_pass_id.value()].render_pass
+			: m_context->swapchain_render_pass(),
 		.subpass = 0
 	};
 	
@@ -865,8 +985,9 @@ BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t
 
 	buffer_copy(buffer.buffer, data, size);
 
-	m_buffers.push_back(buffer);
+	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 
+	m_buffers.push_back(buffer);
 	return (BufferId)m_buffers.size() - 1;
 }
 
@@ -883,8 +1004,9 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 
 	buffer_copy(buffer.buffer, data, size);
 
-	m_buffers.push_back(buffer);
+	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 
+	m_buffers.push_back(buffer);
 	return (BufferId)m_buffers.size() - 1;
 }
 
@@ -899,15 +1021,20 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 
 	buffer_copy(buffer.buffer, data, size);
 
-	m_buffers.push_back(buffer);
+	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 
+	m_buffers.push_back(buffer);
 	return (BufferId)m_buffers.size() - 1;
 }
 
 void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
-	//Buffer& buffer = m_buffers[buffer_id];
+	Buffer& buffer = m_buffers[buffer_id];
 
-	//buffer_copy(buffer.buffer, data, buffer.size);
+	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
+
+	buffer_copy(buffer.buffer, data, buffer.size);
+
+	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
 }
 
 ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags usage, Format format, uint32_t width, uint32_t height) {
@@ -951,12 +1078,14 @@ ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags
 void VulkanGraphicsController::image_update(ImageId image_id, const void* data, size_t size) {
 	Image& image = m_images[image_id];
 
-	if (image.current_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-		transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-		image.current_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	}
-
+	transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	
 	vulkan_image_copy(image.image, image.extent, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
+
+	if (image.current_layout == VK_IMAGE_LAYOUT_UNDEFINED)
+		image.current_layout = image_usage_to_optimal_image_layout(image.usage);
+
+	transition_image_layout(image.image, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.current_layout);
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -1180,6 +1309,31 @@ void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, Vk
 	vkCmdCopyBuffer(m_frames[m_frame_index].draw_buffer, staging_buffer, buffer, 1, &region);
 
 	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
+}
+
+void VulkanGraphicsController::buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size) {
+	auto [src_stages, src_access] = buffer_usage_to_pipeline_stages_and_access(usage);
+	auto [dst_stages, dst_access] = buffer_usage_to_pipeline_stages_and_access(usage);
+	
+	VkBufferMemoryBarrier barrier{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = src_access,
+		.dstAccessMask = dst_access,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = buffer,
+		.offset = offset,
+		.size = size
+	};
+
+	vkCmdPipelineBarrier(
+		m_frames[m_frame_index].draw_buffer,
+		src_stages, dst_stages,
+		0,
+		0, nullptr,
+		1, &barrier,
+		0, nullptr
+	);
 }
 
 VkImage VulkanGraphicsController::vulkan_image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
