@@ -63,6 +63,12 @@ private:
 	bool m_running = true;
 	double m_prev_time_point = 0.0;
 
+	BufferId m_square_vertex_buffer;
+	uint32_t m_square_vertex_count;
+	BufferId m_square_index_buffer;
+	uint32_t m_square_index_count;
+	IndexType m_square_index_type;
+
 	VulkanGraphicsController m_graphics_controller;
 	glm::vec4 m_clear_color = { 1.0f, 0.0f, 1.0f, 1.0f };
 	ImageId m_color_attachment;
@@ -73,6 +79,9 @@ private:
 	PipelineId m_hdr_pipeline;
 	ShaderId m_display_shader;
 	PipelineId m_display_pipeline;
+
+	SamplerId m_display_sampler;
+	UniformSetId m_display_uniform_set;
 
 	BufferId m_vertex_buffer;
 	BufferId m_index_buffer;

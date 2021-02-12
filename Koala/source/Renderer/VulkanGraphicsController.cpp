@@ -345,10 +345,9 @@ void VulkanGraphicsController::draw_begin(FramebufferId framebuffer_id, const gl
 
 	// Transition attchment image layout to its initial layout specified in VkRenderPass instance if it changed
 	for (uint32_t i = 0; i < framebuffer.attachments.size(); i++) {
-		const Image& attachment_image = m_images[framebuffer.attachments[i]];
+		Image& attachment_image = m_images[framebuffer.attachments[i]];
 
-		if (attachment_image.current_layout != render_pass.attachments[i].initial_layout)
-			transition_image_layout(attachment_image.image, attachment_image.aspect, attachment_image.current_layout, render_pass.attachments[i].initial_layout);
+		image_should_have_layout(attachment_image, render_pass.attachments[i].initial_layout);
 	}
 
 	VkRenderPassBeginInfo render_pass_begin_info{
@@ -410,8 +409,19 @@ void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, Un
 	descriptor_sets.reserve(count);
 	
 	for (uint32_t i = 0; i < count; i++) {
-		UniformSet& set = m_uniform_sets[i];
+		UniformSet& set = m_uniform_sets[set_ids[i]];
 
+		// Transition texture image layout to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		for (Uniform& uniform : set.uniforms) {
+			if (uniform.type == UniformType::CombinedImageSampler) {
+				for (size_t i = 0; i < uniform.ids.size(); i += 2)
+					image_should_have_layout(m_images[uniform.ids[i]], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			} else if (uniform.type == UniformType::SampledImage) {
+				for (ImageId id : uniform.ids)
+					image_should_have_layout(m_images[id], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			}
+		}
+	
 		descriptor_sets.push_back(set.descriptor_set);
 	}
 
@@ -1078,14 +1088,14 @@ ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags
 void VulkanGraphicsController::image_update(ImageId image_id, const void* data, size_t size) {
 	Image& image = m_images[image_id];
 
-	transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	image_layout_transition(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	
 	vulkan_image_copy(image.image, image.extent, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
 
 	if (image.current_layout == VK_IMAGE_LAYOUT_UNDEFINED)
 		image.current_layout = image_usage_to_optimal_image_layout(image.usage);
 
-	transition_image_layout(image.image, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.current_layout);
+	image_layout_transition(image, image.current_layout);
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -1141,31 +1151,36 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		};
 
 		switch (uniform.type) {
-		case UniformType::UniformBuffer: {
-			std::vector<VkDescriptorBufferInfo> buffer_infos;
+		case UniformType::Sampler: {
+			throw std::runtime_error("UniformType not supported");
+		}
+		case UniformType::CombinedImageSampler: {
+			std::vector<VkDescriptorImageInfo> image_infos;
 
-			for (size_t i = 0; i < uniform.ids.size(); i++) {
-				Buffer& buffer = m_buffers[uniform.ids[i]];
+			for (size_t i = 0; i < uniform.ids.size(); i += 2) {
+				Image& image = m_images[uniform.ids[i]];
 
-				VkDescriptorBufferInfo buffer_info{
-					.buffer = buffer.buffer,
-					.offset = 0,
-					.range = VK_WHOLE_SIZE
+				image_should_have_layout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+				VkDescriptorImageInfo image_info{
+					.sampler = m_samplers[uniform.ids[i + 1]].sampler,
+					.imageView = image.view,
+					.imageLayout = image.current_layout
 				};
 
-				buffer_infos.push_back(buffer_info);
+				image_infos.push_back(image_info);
 			}
 
-			write.descriptorCount = (uint32_t)uniform.ids.size();
-			write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			write.pBufferInfo = buffer_infos.data();
-			
-			buffer_infos_collector.push_back(std::move(buffer_infos));
+			write.descriptorCount = (uint32_t)uniform.ids.size() / 2;
+			write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			write.pImageInfo = image_infos.data();
+
+			image_infos_collector.push_back(std::move(image_infos));
 
 			break;
 		}
-		/*
 		case UniformType::SampledImage: {
+			throw std::runtime_error("UniformType not supported");
 			std::vector<VkDescriptorImageInfo> image_infos;
 
 			for (size_t i = 0; i < uniform.ids.size(); i++) {
@@ -1187,32 +1202,26 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 
 			break;
 		}
-		*/
-		case UniformType::CombinedImageSampler: {
-			std::vector<VkDescriptorImageInfo> image_infos;
+		case UniformType::UniformBuffer: {
+			std::vector<VkDescriptorBufferInfo> buffer_infos;
 
-			for (size_t i = 0; i < uniform.ids.size(); i += 2) {
-				Image& image = m_images[uniform.ids[i]];
+			for (size_t i = 0; i < uniform.ids.size(); i++) {
+				Buffer& buffer = m_buffers[uniform.ids[i]];
 
-				if (image.current_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-					transition_image_layout(image.image, image.aspect, image.current_layout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-					image.current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				}
-
-				VkDescriptorImageInfo image_info{
-					.sampler = m_samplers[uniform.ids[i + 1]].sampler,
-					.imageView = image.view,
-					.imageLayout = image.current_layout
+				VkDescriptorBufferInfo buffer_info{
+					.buffer = buffer.buffer,
+					.offset = 0,
+					.range = VK_WHOLE_SIZE
 				};
 
-				image_infos.push_back(image_info);
+				buffer_infos.push_back(buffer_info);
 			}
 
-			write.descriptorCount = (uint32_t)uniform.ids.size() / 2;
-			write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			write.pImageInfo = image_infos.data();
-
-			image_infos_collector.push_back(std::move(image_infos));
+			write.descriptorCount = (uint32_t)uniform.ids.size();
+			write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			write.pBufferInfo = buffer_infos.data();
+			
+			buffer_infos_collector.push_back(std::move(buffer_infos));
 
 			break;
 		}
@@ -1238,6 +1247,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		throw std::runtime_error("Failed to allocate descriptor set");
 
 	UniformSet uniform_set{
+		.uniforms = uniforms,
 		.pool_key = pool_key,
 		.pool_idx = pool_idx,
 		.shader = shader_id,
@@ -1412,7 +1422,21 @@ void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkExtent2D exten
 	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
 }
 
-void VulkanGraphicsController::transition_image_layout(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
+void VulkanGraphicsController::image_should_have_layout(Image& image, VkImageLayout layout) {
+	if (image.current_layout != layout && layout != VK_IMAGE_LAYOUT_UNDEFINED)
+		image_layout_transition(image, layout);
+}
+
+void VulkanGraphicsController::image_layout_transition(Image& image, VkImageLayout new_layout) {
+	if (image.current_layout == new_layout)
+		return;
+
+	vulkan_image_memory_barrier(image.image, image.aspect, image.current_layout, new_layout);
+
+	image.current_layout = new_layout;
+}
+
+void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
 	auto [src_stages, src_access] = image_layout_to_pipeline_stages_and_access(old_layout);
 	auto [dst_stages, dst_access] = image_layout_to_pipeline_stages_and_access(new_layout);
 

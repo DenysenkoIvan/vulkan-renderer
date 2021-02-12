@@ -19,12 +19,30 @@ Application::Application(const ApplicationProperties& props) {
 	m_window.initialize(window_props);
 	m_graphics_controller.create(m_window.context());
 
-	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment, Format::RGBA32_SFloat, m_window.width(), m_window.height());
-	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment | ImageUsageSampled, Format::D32_SFloat, m_window.width(), m_window.height());
+	m_square_vertex_count = 4;
+	float vertices[4 * 4] = {
+		-1.0f, -1.0f, 0.0f, 0.0f,
+		 1.0f, -1.0f, 1.0f, 0.0f,
+		-1.0f,  1.0f, 0.0f, 1.0f,
+		 1.0f,  1.0f, 1.0f, 1.0f
+	};
+
+	m_square_index_count = 6;
+	m_square_index_type = IndexType::Uint32;
+	uint32_t indices[6] = {
+		0, 1, 2,
+		1, 2, 3
+	};
+
+	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, 4 * m_square_vertex_count * sizeof(float));
+	m_square_index_buffer = m_graphics_controller.index_buffer_create(indices, m_square_index_count * sizeof(uint32_t), m_square_index_type);
+
+	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment | ImageUsageSampled, Format::RGBA32_SFloat, m_window.width(), m_window.height());
+	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_window.width(), m_window.height());
 
 	std::array<RenderPassAttachment, 2> attachments{};
 	attachments[0].format = Format::RGBA32_SFloat;
-	attachments[0].usage = ImageUsageColorAttachment;
+	attachments[0].usage = ImageUsageColorAttachment | ImageUsageSampled;
 	attachments[0].initial_action = InitialAction::Clear;
 	attachments[0].final_action = FinalAction::Store;
 	attachments[1].format = Format::D32_SFloat;
@@ -144,6 +162,7 @@ Application::Application(const ApplicationProperties& props) {
 	SamplerInfo sampler_info{};
 
 	m_sampler = m_graphics_controller.sampler_create(sampler_info);
+	m_display_sampler = m_graphics_controller.sampler_create(sampler_info);
 
 	std::vector<Uniform> uniform_set0;
 	uniform_set0.reserve(1);
@@ -162,11 +181,21 @@ Application::Application(const ApplicationProperties& props) {
 	texture.ids.push_back(m_sampler);
 
 	uniform_set0.push_back(std::move(uniform_buffer));
-
 	uniform_set1.push_back(std::move(texture));
 
 	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_hdr_shader, 0, uniform_set0);
 	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_hdr_shader, 1, uniform_set1);
+
+	std::vector<Uniform> display_uniforms;
+	Uniform display_texture_buffer;
+	display_texture_buffer.type = UniformType::CombinedImageSampler;
+	display_texture_buffer.binding = 0;
+	display_texture_buffer.ids.push_back(m_color_attachment);
+	display_texture_buffer.ids.push_back(m_display_sampler);
+
+	display_uniforms.push_back(display_texture_buffer);
+
+	m_display_uniform_set = m_graphics_controller.uniform_set_create(m_display_shader, 0, display_uniforms);
 }
 
 Application::~Application() {
@@ -258,8 +287,14 @@ void Application::on_render() {
 	m_graphics_controller.draw_draw_indexed(m_index_count);
 	m_graphics_controller.draw_end();
 
+	UniformSetId display_sets[1] = { m_display_uniform_set };
+
 	m_graphics_controller.draw_begin_for_screen(m_clear_color);
-	//m_graphics_controller.draw_bind_pipeline(m_display_pipeline);
+	m_graphics_controller.draw_bind_pipeline(m_display_pipeline);
+	m_graphics_controller.draw_bind_vertex_buffer(m_square_vertex_buffer);
+	m_graphics_controller.draw_bind_index_buffer(m_square_index_buffer, m_square_index_type);
+	m_graphics_controller.draw_bind_uniform_sets(m_display_pipeline, display_sets, 1);
+	m_graphics_controller.draw_draw_indexed(m_square_index_count);
 	m_graphics_controller.draw_end_for_screen();
 	
 	m_graphics_controller.end_frame();

@@ -342,7 +342,9 @@ private:
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
 	VkImageView vulkan_image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
 	void vulkan_image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size);
-	void transition_image_layout(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
+	void image_should_have_layout(Image& image, VkImageLayout layout);
+	void image_layout_transition(Image& image, VkImageLayout new_layout);
+	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
@@ -377,6 +379,7 @@ private:
 
 	// Uniform Set
 	struct UniformSet {
+		std::vector<Uniform> uniforms;
 		DescriptorPoolKey pool_key;
 		uint32_t pool_idx;
 		ShaderId shader;
