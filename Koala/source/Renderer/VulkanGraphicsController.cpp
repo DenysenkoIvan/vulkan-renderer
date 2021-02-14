@@ -366,7 +366,7 @@ void VulkanGraphicsController::draw_end() {
 	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
 }
 
-void VulkanGraphicsController::draw_begin_for_screen(glm::vec4 clear_color) {
+void VulkanGraphicsController::draw_begin_for_screen(const glm::vec4& clear_color) {
 	VkClearValue clear_value{ clear_color.r, clear_color.g, clear_color.b, clear_color.a };
 	
 	VkRenderPassBeginInfo begin_info{
@@ -383,6 +383,19 @@ void VulkanGraphicsController::draw_begin_for_screen(glm::vec4 clear_color) {
 
 void VulkanGraphicsController::draw_end_for_screen() {
 	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
+}
+
+void VulkanGraphicsController::draw_set_viewport(Viewport viewport) {
+	vkCmdSetViewport(m_frames[m_frame_index].draw_buffer, 0, 1, (VkViewport*)&viewport);
+}
+
+void VulkanGraphicsController::draw_set_scissor(int x_offset, int y_offset, uint32_t width, uint32_t height) {
+	VkRect2D scissor{
+		.offset = { x_offset, y_offset },
+		.extent = { width, height }
+	};
+
+	vkCmdSetScissor(m_frames[m_frame_index].draw_buffer, 0, 1, &scissor);
 }
 
 void VulkanGraphicsController::draw_bind_pipeline(PipelineId pipeline_id) {
@@ -438,7 +451,7 @@ void VulkanGraphicsController::draw_draw_indexed(uint32_t index_count) {
 	vkCmdDrawIndexed(m_frames[m_frame_index].draw_buffer, index_count, 1, 0, 0, 0);
 }
 
-RenderPassId VulkanGraphicsController::render_pass_create(RenderPassAttachment* attachments, uint32_t count) {
+RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttachment* attachments, uint32_t count) {
 	RenderPass render_pass;
 	render_pass.attachments.reserve(count);
 
@@ -947,14 +960,10 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.blendConstants = { 0, 0, 0, 0 }
 	};
 
-	std::array<VkDynamicState, 2> dynamic_states{
-		VK_DYNAMIC_STATE_VIEWPORT , VK_DYNAMIC_STATE_SCISSOR 
-	};
-
 	VkPipelineDynamicStateCreateInfo dynamic_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		.dynamicStateCount = (uint32_t)dynamic_states.size(),
-		.pDynamicStates = dynamic_states.data()
+		.dynamicStateCount = pipeline_info->dynamic_states.dynamic_state_count,
+		.pDynamicStates = (VkDynamicState*)pipeline_info->dynamic_states.dynamic_states
 	};
 
 	VkGraphicsPipelineCreateInfo pipeline_create_info{
@@ -970,7 +979,7 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.pDepthStencilState = &depth_stencil_state,
 		.pColorBlendState = &color_blend_state,
 		// TODO: Add dynamic states support
-		//.pDynamicState = &dynamic_state,
+		.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
 		.renderPass = pipeline_info->render_pass_id
 			? m_render_passes[pipeline_info->render_pass_id.value()].render_pass

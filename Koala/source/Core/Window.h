@@ -18,10 +18,17 @@ struct WindowProperties {
 	Event::event_handler_fn callback;
 };
 
+struct Resolution {
+	uint32_t width = 0;
+	uint32_t height = 0;
+};
+
 class Window {
 public:
 	Window() = default;
 	~Window();
+
+	static Resolution get_monitor_resolution();
 
 	int width();
 	int height();

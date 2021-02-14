@@ -70,6 +70,12 @@ private:
 	IndexType m_square_index_type;
 
 	VulkanGraphicsController m_graphics_controller;
+
+	Resolution m_monitor_resolution;
+	float m_monitor_aspect_ratio = 16 / 9;
+	uint32_t m_color_attachment_width = -1;
+	uint32_t m_color_attachment_height = -1;
+	
 	glm::vec4 m_clear_color = { 1.0f, 0.0f, 1.0f, 1.0f };
 	ImageId m_color_attachment;
 	ImageId m_depth_attachment;

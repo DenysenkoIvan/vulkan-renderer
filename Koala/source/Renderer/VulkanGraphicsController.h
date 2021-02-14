@@ -62,7 +62,7 @@ enum class FinalAction {
 
 struct RenderPassAttachment {
 	ImageUsageFlags usage;
-	Format format;
+	Format format = Format::Undefined;
 	InitialAction initial_action;
 	FinalAction final_action;
 };
@@ -74,8 +74,8 @@ enum class PrimitiveTopology : uint32_t {
 };
 
 struct PipelineAssembly {
-	PrimitiveTopology topology;
-	bool restart_enable;
+	PrimitiveTopology topology = PrimitiveTopology::TriangleList;
+	bool restart_enable = false;
 };
 
 enum class PolygonMode : uint32_t {
@@ -97,23 +97,47 @@ enum class FrontFace : uint32_t {
 };
 
 struct Rasterization {
-	bool depth_clamp_enable;
-	bool rasterizer_discard_enable;
-	PolygonMode polygon_mode;
-	CullMode cull_mode;
+	bool depth_clamp_enable = false;
+	bool rasterizer_discard_enable = false;
+	PolygonMode polygon_mode = PolygonMode::Fill;
+	CullMode cull_mode = CullMode::None;
 	FrontFace front_face;
-	bool depth_bias_enable;
+	bool depth_bias_enable = false;
 	float depth_bias_constant_factor;
 	float depth_bias_clamp;
 	float detpth_bias_slope_factor;
-	float line_width;
+	float line_width = 1.0f;
+};
+
+enum PipelineDynamicState {
+	DYNAMIC_STATE_VIEWPORT = 0,
+	DYNAMIC_STATE_SCISSOR = 1,
+	DYNAMIC_STATE_LINE_WIDTH = 2,
+	DYNAMIC_STATE_DEPTH_BIAS = 3,
+	DYNAMIC_STATE_DEPTH_BOUNDS = 5
+};
+using PipelineDynamicStateFlags = uint32_t;
+
+struct DynamicStates {
+	PipelineDynamicStateFlags* dynamic_states = nullptr;
+	uint32_t dynamic_state_count = 0;
 };
 
 struct PipelineInfo {
 	ShaderId shader_id;
 	PipelineAssembly assembly;
 	Rasterization raster;
+	DynamicStates dynamic_states;
 	std::optional<RenderPassId> render_pass_id;
+};
+
+struct Viewport {
+	float x;
+	float y;
+	float width;
+	float height;
+	float min_depth;
+	float max_depth;
 };
 
 enum class IndexType : uint32_t {
@@ -201,8 +225,11 @@ public:
 	void draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count);
 	void draw_end();
 
-	void draw_begin_for_screen(glm::vec4 clear_colors);
+	void draw_begin_for_screen(const glm::vec4& clear_color);
 	void draw_end_for_screen();
+
+	void draw_set_viewport(Viewport viewport);
+	void draw_set_scissor(int x_offset, int y_offset, uint32_t width, uint32_t height);
 
 	void draw_bind_pipeline(PipelineId pipeline_id);
 	void draw_bind_vertex_buffer(BufferId buffer_id);
@@ -210,7 +237,7 @@ public:
 	void draw_bind_uniform_sets(PipelineId pipeline_id, UniformSetId* set_ids, uint32_t count);
 	void draw_draw_indexed(uint32_t index_count);
 
-	RenderPassId render_pass_create(RenderPassAttachment* attachments, uint32_t count);
+	RenderPassId render_pass_create(const RenderPassAttachment* attachments, uint32_t count);
 
 	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
 

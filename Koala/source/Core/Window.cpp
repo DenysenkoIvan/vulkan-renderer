@@ -20,6 +20,12 @@ Window::~Window() {
 	m_context.release();
 }
 
+Resolution Window::get_monitor_resolution() {
+	const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+
+	return { (uint32_t)mode->width, (uint32_t)mode->height };
+}
+
 int Window::width() {
 	glfwGetWindowSize(m_window, &m_width, &m_height);
 	return m_width;
@@ -75,7 +81,7 @@ void Window::init_window(const WindowProperties& window_props) {
 		callback(e);
 	});
 
-	glfwSetWindowSizeCallback(m_window, [](GLFWwindow *window, int width, int height) {
+	glfwSetWindowSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
 		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
 
 		if (glfwGetWindowAttrib(window, GLFW_ICONIFIED))

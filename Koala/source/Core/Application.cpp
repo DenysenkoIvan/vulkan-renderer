@@ -19,6 +19,12 @@ Application::Application(const ApplicationProperties& props) {
 	m_window.initialize(window_props);
 	m_graphics_controller.create(m_window.context());
 
+	m_color_attachment_width = 1280;
+	m_color_attachment_height = 720;
+
+	m_monitor_resolution = Window::get_monitor_resolution();
+	m_monitor_aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
+
 	m_square_vertex_count = 4;
 	float vertices[4 * 4] = {
 		-1.0f, -1.0f, 0.0f, 0.0f,
@@ -37,8 +43,8 @@ Application::Application(const ApplicationProperties& props) {
 	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, 4 * m_square_vertex_count * sizeof(float));
 	m_square_index_buffer = m_graphics_controller.index_buffer_create(indices, m_square_index_count * sizeof(uint32_t), m_square_index_type);
 
-	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment | ImageUsageSampled, Format::RGBA32_SFloat, m_window.width(), m_window.height());
-	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_window.width(), m_window.height());
+	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment | ImageUsageSampled, Format::RGBA32_SFloat, m_color_attachment_width, m_color_attachment_height);
+	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_color_attachment_width, m_color_attachment_height);
 
 	std::array<RenderPassAttachment, 2> attachments{};
 	attachments[0].format = Format::RGBA32_SFloat;
@@ -58,7 +64,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_mvp.model = glm::mat4(1);
 	m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
+	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.1f, 10.0f);
 	m_mvp.proj[1][1] *= -1;
 
 	auto load_spv = [](const std::filesystem::path& path) -> std::vector<uint8_t> {
@@ -83,6 +89,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_display_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/display.vert.spv"), load_spv("../assets/shaders/display.frag.spv"));
 
+	std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
+
 	PipelineInfo hdr_pipeline_info{};
 	hdr_pipeline_info.shader_id = m_hdr_shader;
 	hdr_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
@@ -93,6 +101,8 @@ Application::Application(const ApplicationProperties& props) {
 	hdr_pipeline_info.raster.cull_mode = CullMode::None;
 	hdr_pipeline_info.raster.depth_bias_enable = false;
 	hdr_pipeline_info.raster.line_width = 1.0f;
+	hdr_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
+	hdr_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 	hdr_pipeline_info.render_pass_id = m_render_pass;
 
 	m_hdr_pipeline = m_graphics_controller.pipeline_create(&hdr_pipeline_info);
@@ -107,6 +117,8 @@ Application::Application(const ApplicationProperties& props) {
 	display_pipeline_info.raster.cull_mode = CullMode::None;
 	display_pipeline_info.raster.depth_bias_enable = false;
 	display_pipeline_info.raster.line_width = 1.0f;
+	display_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
+	display_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 
 	m_display_pipeline = m_graphics_controller.pipeline_create(&display_pipeline_info);
 
@@ -200,7 +212,6 @@ Application::Application(const ApplicationProperties& props) {
 
 Application::~Application() {
 	m_graphics_controller.destroy();
-	//m_renderer.destroy();
 }
 
 void Application::on_event(Event& e) {
@@ -234,9 +245,13 @@ void Application::on_window_close(WindowCloseEvent& e) {
 
 void Application::on_window_resize(WindowResizeEvent& e) {
 	m_graphics_controller.resize(e.width(), e.height());
-	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_window.width() / (float)m_window.height(), 0.1f, 10.0f);
+	
+	//m_mvp.model = glm::mat4(1);
+	//m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	m_mvp.proj = glm::perspective(glm::radians(45.0f), (float)e.width() / e.height(), 0.1f, 10.0f);
 	m_mvp.proj[1][1] *= -1;
-	//m_renderer.on_resize(e.width(), e.height());
+	
+	m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
 }
 
 void Application::on_update() {
@@ -250,11 +265,10 @@ void Application::on_update() {
 
 	float time_diff = (float)(time_point - m_prev_time_point);
 
-	m_mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	//m_mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
 	//m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
-	//m_vertex_buffer->update(vertices, sizeof(vertices));
-
+	
 	m_clear_color.r += delta * time_diff;
 	m_clear_color.b += delta * time_diff;
 
@@ -276,27 +290,36 @@ void Application::on_update() {
 
 void Application::on_render() {
 	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
-
-	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
-
 	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
+
+	m_graphics_controller.draw_set_viewport({ 0.0f, 0.0f, (float)m_color_attachment_width, (float)m_color_attachment_height, 0.0f, 1.0f });
+	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_width, m_color_attachment_height);
+	
+	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
 	m_graphics_controller.draw_bind_pipeline(m_hdr_pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffer);
 	m_graphics_controller.draw_bind_index_buffer(m_index_buffer, m_index_type);
 	m_graphics_controller.draw_bind_uniform_sets(m_hdr_pipeline, sets, 2);
 	m_graphics_controller.draw_draw_indexed(m_index_count);
+	
 	m_graphics_controller.draw_end();
 
-	UniformSetId display_sets[1] = { m_display_uniform_set };
 
 	m_graphics_controller.draw_begin_for_screen(m_clear_color);
+	
+	m_graphics_controller.draw_set_viewport({ 0.0f, 0.0f, (float)m_window.width(), (float)m_window.height(), 0.0f, 1.0f });
+	m_graphics_controller.draw_set_scissor(0, 0, m_window.width(), m_window.height());
+	
+	UniformSetId display_sets[1] = { m_display_uniform_set };
 	m_graphics_controller.draw_bind_pipeline(m_display_pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_square_vertex_buffer);
 	m_graphics_controller.draw_bind_index_buffer(m_square_index_buffer, m_square_index_type);
 	m_graphics_controller.draw_bind_uniform_sets(m_display_pipeline, display_sets, 1);
 	m_graphics_controller.draw_draw_indexed(m_square_index_count);
+	
 	m_graphics_controller.draw_end_for_screen();
 	
+
 	m_graphics_controller.end_frame();
 
 	for (const auto& layer : m_layer_stack)
