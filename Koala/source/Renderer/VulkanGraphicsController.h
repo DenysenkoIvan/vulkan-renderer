@@ -228,7 +228,7 @@ public:
 	void draw_begin_for_screen(const glm::vec4& clear_color);
 	void draw_end_for_screen();
 
-	void draw_set_viewport(Viewport viewport);
+	void draw_set_viewport(float x, float y, float width, float height, float min_depth, float max_depth);
 	void draw_set_scissor(int x_offset, int y_offset, uint32_t width, uint32_t height);
 
 	void draw_bind_pipeline(PipelineId pipeline_id);

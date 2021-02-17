@@ -12,6 +12,8 @@ public:
 
 class MouseMovedEvent final : public MouseEvent {
 public:
+	virtual ~MouseMovedEvent() {}
+
 	MouseMovedEvent(double xpos, double ypos) :
 		m_xpos(xpos), m_ypos(ypos) {}
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 
 #include <Core/LayerStack.h>
@@ -36,6 +37,37 @@ struct Vertex {
 	}
 };
 
+struct Camera {
+	glm::vec3 eye = glm::vec3(0.0f, 0.0f, 0.0f);
+	glm::vec3 front;
+	glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
+
+	void move_forward(float movement) {
+		eye += front * movement;
+	}
+
+	void move_left(float movement) {
+		glm::vec3 left = glm::cross(up, front);
+		eye += left * movement;
+	}
+
+	void turn_left(float degrees) {
+		glm::mat4 m = glm::rotate(glm::mat4(1.0f), glm::radians(degrees), up);
+		front = m * glm::vec4(front, 1.0f);
+		front = glm::normalize(front);
+	}
+
+	void turn_up(float degrees) {
+		glm::mat4 m = glm::rotate(glm::mat4(1.0f), glm::radians(degrees), glm::cross(up, front));
+		front = m * glm::vec4(front, 1.0f);
+		front = glm::normalize(front);
+	}
+
+	glm::mat4 view_matrix() const {
+		return glm::lookAt(eye, eye + front, up);
+	}
+};
+
 class Application {
 public:
 	Application(const ApplicationProperties& props={});
@@ -51,12 +83,18 @@ private:
 
 	void on_window_close(WindowCloseEvent& e);
 	void on_window_resize(WindowResizeEvent& e);
+	void on_mouse_move(MouseMovedEvent& e);
 	void on_update();
 	void on_render();
 
 	friend int main(int argc, char** argv);
 
 private:
+	std::chrono::steady_clock::time_point m_start_time_point;
+	float m_previous_time_step;
+	int m_prev_mouse_x, m_prev_mouse_y;
+	int m_mouse_x, m_mouse_y;
+	
 	ApplicationProperties m_app_properties;
 	Window m_window;
 	LayerStack m_layer_stack;
@@ -93,7 +131,7 @@ private:
 	BufferId m_index_buffer;
 	IndexType m_index_type;
 	uint32_t m_index_count;
-	BufferId m_uniform_buffer;
+	BufferId m_model_uniform_buffer;
 	ImageId m_texture;
 	SamplerId m_sampler;
 	UniformSetId m_uniform_set0;
@@ -105,7 +143,8 @@ private:
 		alignas(16) glm::mat4 proj;
 	};
 	
-	MVP m_mvp;
+	Camera m_camera;
+	BufferId m_proj_view_uniform_buffer;
 	std::vector<Vertex> m_vertices;
 	std::vector<uint32_t> m_indices;
 };

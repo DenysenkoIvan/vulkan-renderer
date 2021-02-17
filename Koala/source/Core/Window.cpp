@@ -68,9 +68,9 @@ void Window::init_window(const WindowProperties& window_props) {
 	if (!m_window)
 		throw std::runtime_error("Failed to create a window");
 
-	m_callback = window_props.callback;
+	glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	auto f = &m_callback;
+	m_callback = window_props.callback;
 
 	glfwSetWindowUserPointer(m_window, &m_callback);
 

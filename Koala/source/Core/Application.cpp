@@ -10,6 +10,8 @@
 #include <vector>
 
 Application::Application(const ApplicationProperties& props) {
+	m_start_time_point = std::chrono::steady_clock::now();
+
 	WindowProperties window_props;
 	window_props.width = props.width;
 	window_props.height = props.height;
@@ -24,6 +26,12 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_monitor_resolution = Window::get_monitor_resolution();
 	m_monitor_aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
+
+	m_prev_mouse_x = props.width / 2;
+	m_prev_mouse_y = props.height / 2;
+
+	m_camera.front = glm::vec3(2.0f, 2.0f, 0.0f);
+	m_camera.front= glm::normalize(m_camera.front);
 
 	m_square_vertex_count = 4;
 	float vertices[4 * 4] = {
@@ -61,11 +69,6 @@ Application::Application(const ApplicationProperties& props) {
 	ImageId ids[2] = { m_color_attachment, m_depth_attachment };
 
 	m_framebuffer = m_graphics_controller.framebuffer_create(m_render_pass, ids, 2);
-
-	m_mvp.model = glm::mat4(1);
-	m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	m_mvp.proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.1f, 10.0f);
-	m_mvp.proj[1][1] *= -1;
 
 	auto load_spv = [](const std::filesystem::path& path) -> std::vector<uint8_t> {
 		if (!std::filesystem::exists(path))
@@ -167,7 +170,9 @@ Application::Application(const ApplicationProperties& props) {
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 	
-	m_uniform_buffer = m_graphics_controller.uniform_buffer_create(&m_mvp, sizeof(MVP));
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 0.0f));
+	m_model_uniform_buffer = m_graphics_controller.uniform_buffer_create(&model, sizeof(glm::mat4));
+	m_proj_view_uniform_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
 	
 	m_texture = m_graphics_controller.image_create(pixels, ImageUsageSampled | ImageUsageTransferDst, Format::RGBA8_SRGB, width, height);
 	
@@ -177,14 +182,19 @@ Application::Application(const ApplicationProperties& props) {
 	m_display_sampler = m_graphics_controller.sampler_create(sampler_info);
 
 	std::vector<Uniform> uniform_set0;
-	uniform_set0.reserve(1);
+	uniform_set0.reserve(2);
 	std::vector<Uniform> uniform_set1;
-	uniform_set1.reserve(2);
+	uniform_set1.reserve(1);
 	
-	Uniform uniform_buffer;
-	uniform_buffer.type = UniformType::UniformBuffer;
-	uniform_buffer.binding = 0;
-	uniform_buffer.ids.push_back(m_uniform_buffer);
+	Uniform proj_view_buffer;
+	proj_view_buffer.type = UniformType::UniformBuffer;
+	proj_view_buffer.binding = 0;
+	proj_view_buffer.ids.push_back(m_proj_view_uniform_buffer);
+
+	Uniform model_buffer;
+	model_buffer.type = UniformType::UniformBuffer;
+	model_buffer.binding = 1;
+	model_buffer.ids.push_back(m_model_uniform_buffer);
 
 	Uniform texture;
 	texture.type = UniformType::CombinedImageSampler;
@@ -192,7 +202,8 @@ Application::Application(const ApplicationProperties& props) {
 	texture.ids.push_back(m_texture);
 	texture.ids.push_back(m_sampler);
 
-	uniform_set0.push_back(std::move(uniform_buffer));
+	uniform_set0.push_back(std::move(proj_view_buffer));
+	uniform_set0.push_back(std::move(model_buffer));
 	uniform_set1.push_back(std::move(texture));
 
 	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_hdr_shader, 0, uniform_set0);
@@ -219,6 +230,7 @@ void Application::on_event(Event& e) {
 
 	dispatcher.dispatch<WindowResizeEvent>([this](WindowResizeEvent& e) { this->on_window_resize(e); });
 	dispatcher.dispatch<WindowCloseEvent>([this](WindowCloseEvent& e) { this->on_window_close(e); });
+	dispatcher.dispatch<MouseMovedEvent>([this](MouseMovedEvent& e) { this->on_mouse_move(e); });
 	//if (dispatcher.is_dispatched())
 	//	return;
 
@@ -246,53 +258,72 @@ void Application::on_window_close(WindowCloseEvent& e) {
 void Application::on_window_resize(WindowResizeEvent& e) {
 	m_graphics_controller.resize(e.width(), e.height());
 	
-	//m_mvp.model = glm::mat4(1);
-	//m_mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	m_mvp.proj = glm::perspective(glm::radians(45.0f), (float)e.width() / e.height(), 0.1f, 10.0f);
-	m_mvp.proj[1][1] *= -1;
-	
-	m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
+	glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.1f, 10000.0f);
+	proj[1][1] *= -1;
+	glm::mat4 proj_view = proj * m_camera.view_matrix();
+
+	m_graphics_controller.buffer_update(m_proj_view_uniform_buffer, &proj_view);
+}
+
+void Application::on_mouse_move(MouseMovedEvent& e) {
+	static bool first_mouse = true;
+	if (first_mouse) {
+		m_prev_mouse_x = (int)e.x();
+		m_prev_mouse_y = (int)e.y();
+		first_mouse = false;
+	}
+
+	m_mouse_x = (int)e.x();
+	m_mouse_y = (int)e.y();
 }
 
 void Application::on_update() {
-	static auto start_time = std::chrono::high_resolution_clock::now();
 	auto current_time = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+	float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - m_start_time_point).count();
 
-	double time_point = glfwGetTime();
+	float delta_time = time - m_previous_time_step;
 
-	static float delta = 0.68f;
+	float speed = delta_time * 2.0f;
+	if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_W) == GLFW_PRESS)
+		m_camera.move_forward(speed);
+	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_S) == GLFW_PRESS)
+		m_camera.move_forward(-speed);
+	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_A) == GLFW_PRESS)
+		m_camera.move_left(speed);
+	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_D) == GLFW_PRESS)
+		m_camera.move_left(-speed);
+		
+	float delta_mouse_x = (float)m_mouse_x - m_prev_mouse_x;
+	float delta_mouse_y = (float)m_mouse_y - m_prev_mouse_y;
 
-	float time_diff = (float)(time_point - m_prev_time_point);
+	float sensetivity = 0.1f;
+	delta_mouse_x *= sensetivity;
+	delta_mouse_y *= sensetivity;
 
-	//m_mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	m_camera.turn_left(-delta_mouse_x);
+	m_camera.turn_up(delta_mouse_y);
 
-	//m_graphics_controller.buffer_update(m_uniform_buffer, &m_mvp);
-	
-	m_clear_color.r += delta * time_diff;
-	m_clear_color.b += delta * time_diff;
+	glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.0001f, 1000.0f);
+	proj[1][1] *= -1;
+	glm::mat4 proj_view = proj * m_camera.view_matrix();
+	m_graphics_controller.buffer_update(m_proj_view_uniform_buffer, &proj_view);
 
-	if (m_clear_color.r >= 1.0f) {
-		m_clear_color.r = 1.0f;
-		m_clear_color.b = 1.0f;
-		delta = -0.5f;
-	} else if (m_clear_color.r <= 0.0f) {
-		m_clear_color.r = 0.0f;
-		m_clear_color.b = 0.0f;
-		delta = 0.5f;
-	}
-	
-	m_prev_time_point = time_point;
+	//glm::mat4 model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	//m_graphics_controller.buffer_update(m_model_uniform_buffer, &model);
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
+
+	m_previous_time_step = time;
+	m_prev_mouse_x = m_mouse_x;
+	m_prev_mouse_y = m_mouse_y;
 }
 
 void Application::on_render() {
 	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
 	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
-
-	m_graphics_controller.draw_set_viewport({ 0.0f, 0.0f, (float)m_color_attachment_width, (float)m_color_attachment_height, 0.0f, 1.0f });
+	
+	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_color_attachment_width, (float)m_color_attachment_height, 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_width, m_color_attachment_height);
 	
 	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
@@ -307,7 +338,7 @@ void Application::on_render() {
 
 	m_graphics_controller.draw_begin_for_screen(m_clear_color);
 	
-	m_graphics_controller.draw_set_viewport({ 0.0f, 0.0f, (float)m_window.width(), (float)m_window.height(), 0.0f, 1.0f });
+	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_window.width(), (float)m_window.height(), 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, m_window.width(), m_window.height());
 	
 	UniformSetId display_sets[1] = { m_display_uniform_set };

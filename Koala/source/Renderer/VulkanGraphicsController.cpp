@@ -385,8 +385,17 @@ void VulkanGraphicsController::draw_end_for_screen() {
 	vkCmdEndRenderPass(m_frames[m_frame_index].draw_buffer);
 }
 
-void VulkanGraphicsController::draw_set_viewport(Viewport viewport) {
-	vkCmdSetViewport(m_frames[m_frame_index].draw_buffer, 0, 1, (VkViewport*)&viewport);
+void VulkanGraphicsController::draw_set_viewport(float x, float y, float width, float height, float min_depth, float max_depth) {
+	VkViewport viewport{
+		.x = x,
+		.y = y,
+		.width = width,
+		.height = height,
+		.minDepth = min_depth,
+		.maxDepth = max_depth
+	};
+
+	vkCmdSetViewport(m_frames[m_frame_index].draw_buffer, 0, 1, &viewport);
 }
 
 void VulkanGraphicsController::draw_set_scissor(int x_offset, int y_offset, uint32_t width, uint32_t height) {
@@ -471,6 +480,7 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 		.dstSubpass = VK_SUBPASS_EXTERNAL
 	};
 
+	// TODO: make subpass dependencis optimal
 	for (uint32_t i = 0; i < count; i++) {
 		const RenderPassAttachment& attachment = attachments[i];
 
@@ -651,7 +661,7 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 		.pResolveAttachments = resolve_attachments.data(),
 		.pDepthStencilAttachment = depth_stencil_attachments.data()
 	};
-	
+
 	VkSubpassDependency dependencies[2] = { external_to_subpass, subpass_to_external };
 
 	VkRenderPassCreateInfo render_pass_info{
@@ -1038,9 +1048,10 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 	buffer.buffer = buffer_create(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, size);
 	buffer.memory = buffer_allocate(buffer.buffer, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-	buffer_copy(buffer.buffer, data, size);
-
-	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
+	if (data) {
+		buffer_copy(buffer.buffer, data, size);
+		buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
+	}
 
 	m_buffers.push_back(buffer);
 	return (BufferId)m_buffers.size() - 1;
