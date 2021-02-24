@@ -49,6 +49,13 @@ enum ImageUsageFlagBits {
 };
 using ImageUsageFlags = uint32_t;
 
+enum class ImageViewType {
+	OneD = 0,
+	TwoD = 1,
+	ThreeD = 2,
+	Cube = 3
+};
+
 enum class InitialAction {
 	Load = 0,
 	Clear = 1,
@@ -129,6 +136,16 @@ struct PipelineInfo {
 	Rasterization raster;
 	DynamicStates dynamic_states;
 	std::optional<RenderPassId> render_pass_id;
+};
+
+struct ImageInfo {
+	ImageUsageFlags usage;
+	ImageViewType view_type = ImageViewType::TwoD;
+	Format format;
+	uint32_t width;
+	uint32_t height;
+	uint32_t depth = 1;
+	uint32_t layer_count = 1;
 };
 
 struct Viewport {
@@ -251,7 +268,7 @@ public:
 
 	void buffer_update(BufferId buffer_id, const void* data);
 
-	ImageId image_create(const void* data, ImageUsageFlags usage, Format format, uint32_t width, uint32_t height);
+	ImageId image_create(const void* data, const ImageInfo& info);
 	void image_update(ImageId image_id, const void* data, size_t size);
 
 	SamplerId sampler_create(const SamplerInfo& info);
@@ -355,25 +372,23 @@ private:
 
 	// Images
 	struct Image {
+		ImageInfo info;
 		VkImage image;
 		VkDeviceMemory memory;
 		VkImageView view;
-		VkExtent2D extent;
-		VkFormat format;
-		ImageUsageFlags usage;
 		VkImageLayout current_layout;
 		VkImageAspectFlags aspect;
 	};
 
-	VkImage vulkan_image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage);
+	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
-	VkImageView vulkan_image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect);
-	void vulkan_image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size);
+	VkImageView vulkan_image_view_create(VkImage image, VkImageViewType view_type, VkFormat format, VkImageAspectFlags aspect, uint32_t layer_count);
+	void vulkan_image_copy(VkImage image, VkFormat format, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count, const void* data, size_t size);
 	void image_should_have_layout(Image& image, VkImageLayout layout);
 	void image_layout_transition(Image& image, VkImageLayout new_layout);
-	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout);
+	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
 
-	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);
 
 	// Sampler
 	struct Sampler {

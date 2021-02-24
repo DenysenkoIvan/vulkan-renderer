@@ -684,8 +684,8 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count) {
 	RenderPass& render_pass = m_render_passes[render_pass_id];
 
-	uint32_t width = m_images[ids[0]].extent.width;
-	uint32_t height = m_images[ids[0]].extent.height;
+	uint32_t width = m_images[ids[0]].info.width;
+	uint32_t height = m_images[ids[0]].info.height;
 
 	Framebuffer framebuffer{
 		.render_pass_id = render_pass_id,
@@ -1067,13 +1067,13 @@ void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* dat
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
 }
 
-ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags usage, Format format, uint32_t width, uint32_t height) {
-	VkFormat vk_format = (VkFormat)format;
+ImageId VulkanGraphicsController::image_create(const void* data, const ImageInfo& info) {
+	VkFormat vk_format = (VkFormat)info.format;
 	VkImageAspectFlags aspect = 0;
 	VkImageUsageFlags vk_usage = 0;
-	VkDeviceSize size = vk_format_to_size(vk_format) * width * height;
+	VkDeviceSize size = vk_format_to_size(vk_format) * info.width * info.height * info.depth * info.layer_count;
 
-	if (usage & ImageUsageDepthStencilAttachment) {
+	if (info.usage & ImageUsageDepthStencilAttachment) {
 		aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
 
 		if (format_has_stencil(vk_format))
@@ -1081,17 +1081,19 @@ ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags
 	} else
 		aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 
-	VkMemoryPropertyFlags mem_props = usage & ImageUsageCPUVisible
-		? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-		: VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	VkMemoryPropertyFlags mem_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
+	
+	if (info.usage & ImageUsageCPUVisible) {
+		mem_props = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+		tiling = VK_IMAGE_TILING_LINEAR;
+	}
 
 	Image image{
-		.image = vulkan_image_create({ width, height }, vk_format, (VkImageUsageFlags)usage),
+		.info = info,
+		.image = vulkan_image_create(info.view_type, vk_format, { info.width, info.height, info.depth }, info.layer_count, tiling, (VkImageUsageFlags)info.usage),
 		.memory = vulkan_image_allocate(image.image, mem_props),
-		.view = vulkan_image_view_create(image.image, vk_format, aspect),
-		.extent = { width, height },
-		.format = vk_format,
-		.usage = usage,
+		.view = vulkan_image_view_create(image.image, (VkImageViewType)info.view_type, vk_format, aspect, info.layer_count),
 		.current_layout = VK_IMAGE_LAYOUT_UNDEFINED,
 		.aspect = aspect
 	};
@@ -1108,14 +1110,16 @@ ImageId VulkanGraphicsController::image_create(const void* data, ImageUsageFlags
 void VulkanGraphicsController::image_update(ImageId image_id, const void* data, size_t size) {
 	Image& image = m_images[image_id];
 
+	VkImageLayout layout = image.current_layout;
+
 	image_layout_transition(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	
-	vulkan_image_copy(image.image, image.extent, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, data, size);
+	vulkan_image_copy(image.image, (VkFormat)image.info.format, { image.info.width, image.info.height, image.info.depth }, image.aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.info.layer_count, data, size);
 
-	if (image.current_layout == VK_IMAGE_LAYOUT_UNDEFINED)
-		image.current_layout = image_usage_to_optimal_image_layout(image.usage);
+	if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+		layout = image_usage_to_optimal_image_layout(image.info.usage);
 
-	image_layout_transition(image, image.current_layout);
+	image_layout_transition(image, layout);
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -1366,16 +1370,17 @@ void VulkanGraphicsController::buffer_memory_barrier(VkBuffer& buffer, VkBufferU
 	);
 }
 
-VkImage VulkanGraphicsController::vulkan_image_create(VkExtent2D extent, VkFormat format, VkImageUsageFlags usage) {
+VkImage VulkanGraphicsController::vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage) {
 	VkImageCreateInfo image_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
+		.flags = view_type == ImageViewType::Cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : (VkImageCreateFlags)0,
+		.imageType = view_type == ImageViewType::Cube ? VK_IMAGE_TYPE_2D : (VkImageType)view_type,
 		.format = format,
-		.extent = { extent.width, extent.height, 1 },
+		.extent = extent,
 		.mipLevels = 1,
-		.arrayLayers = 1,
+		.arrayLayers = layer_count,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.tiling = tiling,
 		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
@@ -1407,13 +1412,13 @@ VkDeviceMemory VulkanGraphicsController::vulkan_image_allocate(VkImage image, Vk
 	return memory;
 }
 
-VkImageView VulkanGraphicsController::vulkan_image_view_create(VkImage image, VkFormat format, VkImageAspectFlags aspect) {
+VkImageView VulkanGraphicsController::vulkan_image_view_create(VkImage image, VkImageViewType view_type, VkFormat format, VkImageAspectFlags aspect, uint32_t layer_count) {
 	VkImageViewCreateInfo view_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = image,
-		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.viewType = view_type,
 		.format = format,
-		.subresourceRange = { aspect, 0, 1, 0, 1 }
+		.subresourceRange = { aspect, 0, 1, 0, layer_count }
 	};
 	
 	VkImageView image_view;
@@ -1423,7 +1428,7 @@ VkImageView VulkanGraphicsController::vulkan_image_view_create(VkImage image, Vk
 	return image_view;
 }
 
-void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkExtent2D extent, VkImageAspectFlags aspect, VkImageLayout layout, const void* data, size_t size) {
+void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkFormat format, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count, const void* data, size_t size) {
 	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
 	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
@@ -1432,12 +1437,21 @@ void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkExtent2D exten
 	memcpy(staging_data, data, size);
 	vkUnmapMemory(m_context->device(), staging_memory);
 
-	VkBufferImageCopy region{
-		.imageSubresource = { aspect, 0, 0, 1 },
-		.imageExtent = { extent.width, extent.height, 1 }
-	};
+	std::vector<VkBufferImageCopy> buffer_copy_regions;
+	buffer_copy_regions.reserve(layer_count);
+	
+	uint32_t layer_size = size / layer_count;
+	for (uint32_t i = 0; i < layer_count; i++) {
+		VkBufferImageCopy region{
+			.bufferOffset = i * layer_size,
+			.imageSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = i, .layerCount = 1 },
+			.imageExtent = extent
+		};
 
-	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer, image, layout, 1, &region);
+		buffer_copy_regions.push_back(region);
+	}
+
+	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer, image, layout, layer_count, buffer_copy_regions.data());
 
 	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
 }
@@ -1451,12 +1465,12 @@ void VulkanGraphicsController::image_layout_transition(Image& image, VkImageLayo
 	if (image.current_layout == new_layout)
 		return;
 
-	vulkan_image_memory_barrier(image.image, image.aspect, image.current_layout, new_layout);
+	vulkan_image_memory_barrier(image.image, image.aspect, image.current_layout, new_layout, image.info.layer_count);
 
 	image.current_layout = new_layout;
 }
 
-void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout) {
+void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count) {
 	auto [src_stages, src_access] = image_layout_to_pipeline_stages_and_access(old_layout);
 	auto [dst_stages, dst_access] = image_layout_to_pipeline_stages_and_access(new_layout);
 
@@ -1469,7 +1483,7 @@ void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImag
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = image,
-		.subresourceRange = { aspect, 0, 1, 0, 1 }
+		.subresourceRange = { aspect, 0, 1, 0, layer_count }
 	};
 
 	vkCmdPipelineBarrier(

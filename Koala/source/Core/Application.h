@@ -111,10 +111,10 @@ private:
 
 	Resolution m_monitor_resolution;
 	float m_monitor_aspect_ratio = 16 / 9;
-	uint32_t m_color_attachment_width = -1;
-	uint32_t m_color_attachment_height = -1;
 	
 	glm::vec4 m_clear_color = { 1.0f, 0.0f, 1.0f, 1.0f };
+	ImageInfo m_color_attachment_image_info;
+	ImageInfo m_depth_attachment_image_info;
 	ImageId m_color_attachment;
 	ImageId m_depth_attachment;
 	RenderPassId m_render_pass;
@@ -132,17 +132,15 @@ private:
 	IndexType m_index_type;
 	uint32_t m_index_count;
 	BufferId m_model_uniform_buffer;
+	ImageInfo m_texture_image_info;
 	ImageId m_texture;
 	SamplerId m_sampler;
 	UniformSetId m_uniform_set0;
 	UniformSetId m_uniform_set1;
 	
-	struct MVP {
-		alignas(16) glm::mat4 model;
-		alignas(16) glm::mat4 view;
-		alignas(16) glm::mat4 proj;
-	};
-	
+	ImageInfo m_skybox_image_info;
+	ImageId m_skybox_image;
+
 	Camera m_camera;
 	BufferId m_proj_view_uniform_buffer;
 	std::vector<Vertex> m_vertices;

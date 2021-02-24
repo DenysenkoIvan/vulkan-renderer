@@ -9,6 +9,39 @@
 #include <stdexcept>
 #include <vector>
 
+std::vector<float> load_hdr_cube_map(std::string_view filename, int* x, int* y) {
+	int channels = -1;
+	int rows = -1;
+	int cols = -1;
+
+	float* pixels = stbi_loadf(filename.data(), &rows, &cols, &channels, STBI_rgb_alpha);
+
+	if (!pixels)
+		throw std::runtime_error("Failed to load image");
+
+	size_t map_size = rows * cols * channels;
+
+	std::vector<float> storage;
+	storage.reserve(map_size);
+
+	size_t offset = rows / 6 * 4;
+	for (int i = 0; i < 6; i++) {
+		for (int j = 0; j < cols; j++) {
+			for (int k = 0; k < offset; k++) {
+				size_t o = j * rows * 4 + i * offset + k;
+				storage.push_back(pixels[o]);
+			}
+		}
+	}
+
+	stbi_image_free(pixels);
+
+	*x = rows;
+	*y = cols;
+
+	return storage;
+}
+
 Application::Application(const ApplicationProperties& props) {
 	m_start_time_point = std::chrono::steady_clock::now();
 
@@ -20,9 +53,6 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_window.initialize(window_props);
 	m_graphics_controller.create(m_window.context());
-
-	m_color_attachment_width = 1280;
-	m_color_attachment_height = 720;
 
 	m_monitor_resolution = Window::get_monitor_resolution();
 	m_monitor_aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
@@ -51,16 +81,37 @@ Application::Application(const ApplicationProperties& props) {
 	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, 4 * m_square_vertex_count * sizeof(float));
 	m_square_index_buffer = m_graphics_controller.index_buffer_create(indices, m_square_index_count * sizeof(uint32_t), m_square_index_type);
 
-	m_color_attachment = m_graphics_controller.image_create(nullptr, ImageUsageColorAttachment | ImageUsageSampled, Format::RGBA32_SFloat, m_color_attachment_width, m_color_attachment_height);
-	m_depth_attachment = m_graphics_controller.image_create(nullptr, ImageUsageDepthStencilAttachment, Format::D32_SFloat, m_color_attachment_width, m_color_attachment_height);
+	m_color_attachment_image_info = {
+		.usage = ImageUsageColorAttachment | ImageUsageSampled,
+		.view_type = ImageViewType::TwoD,
+		.format = Format::RGBA32_SFloat,
+		.width = 1280,
+		.height = 720,
+		.depth = 1,
+		.layer_count = 1
+	};
+
+	m_color_attachment = m_graphics_controller.image_create(nullptr, m_color_attachment_image_info);
+	
+	m_depth_attachment_image_info = {
+		.usage = ImageUsageDepthStencilAttachment,
+		.view_type = ImageViewType::TwoD,
+		.format = Format::D32_SFloat,
+		.width = 1280,
+		.height = 720,
+		.depth = 1,
+		.layer_count = 1
+	};
+
+	m_depth_attachment = m_graphics_controller.image_create(nullptr, m_depth_attachment_image_info);
 
 	std::array<RenderPassAttachment, 2> attachments{};
-	attachments[0].format = Format::RGBA32_SFloat;
-	attachments[0].usage = ImageUsageColorAttachment | ImageUsageSampled;
+	attachments[0].format = m_color_attachment_image_info.format;
+	attachments[0].usage = m_color_attachment_image_info.usage;
 	attachments[0].initial_action = InitialAction::Clear;
 	attachments[0].final_action = FinalAction::Store;
-	attachments[1].format = Format::D32_SFloat;
-	attachments[1].usage = ImageUsageDepthStencilAttachment;
+	attachments[1].format = m_depth_attachment_image_info.format;
+	attachments[1].usage = m_depth_attachment_image_info.usage;
 	attachments[1].initial_action = InitialAction::Clear;
 	attachments[1].final_action = FinalAction::DontCare;
 
@@ -174,8 +225,32 @@ Application::Application(const ApplicationProperties& props) {
 	m_model_uniform_buffer = m_graphics_controller.uniform_buffer_create(&model, sizeof(glm::mat4));
 	m_proj_view_uniform_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
 	
-	m_texture = m_graphics_controller.image_create(pixels, ImageUsageSampled | ImageUsageTransferDst, Format::RGBA8_SRGB, width, height);
+	m_texture_image_info = {
+		.usage = ImageUsageSampled | ImageUsageTransferDst,
+		.view_type = ImageViewType::TwoD,
+		.format = Format::RGBA8_SRGB,
+		.width = (uint32_t)width,
+		.height = (uint32_t)height,
+		.depth = 1,
+		.layer_count = 1
+	};
+
+	m_texture = m_graphics_controller.image_create(pixels, m_texture_image_info);
 	
+	std::vector<float> skybox_pixels = load_hdr_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
+
+	m_skybox_image_info = {
+		.usage = ImageUsageSampled | ImageUsageTransferDst,
+		.view_type = ImageViewType::Cube,
+		.format = Format::RGBA32_SFloat,
+		.width = (uint32_t)height,
+		.height = (uint32_t)width / 6,
+		.depth = 1,
+		.layer_count = 6
+	};
+
+	m_skybox_image = m_graphics_controller.image_create(skybox_pixels.data(), m_skybox_image_info);
+
 	SamplerInfo sampler_info{};
 
 	m_sampler = m_graphics_controller.sampler_create(sampler_info);
@@ -184,8 +259,8 @@ Application::Application(const ApplicationProperties& props) {
 	std::vector<Uniform> uniform_set0;
 	uniform_set0.reserve(2);
 	std::vector<Uniform> uniform_set1;
-	uniform_set1.reserve(1);
 	
+	uniform_set1.reserve(1);
 	Uniform proj_view_buffer;
 	proj_view_buffer.type = UniformType::UniformBuffer;
 	proj_view_buffer.binding = 0;
@@ -323,8 +398,8 @@ void Application::on_render() {
 	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
 	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
 	
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_color_attachment_width, (float)m_color_attachment_height, 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_width, m_color_attachment_height);
+	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_color_attachment_image_info.width, (float)m_color_attachment_image_info.height, 0.0f, 1.0f);
+	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_image_info.width, m_color_attachment_image_info.height);
 	
 	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
 	m_graphics_controller.draw_bind_pipeline(m_hdr_pipeline);
