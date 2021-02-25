@@ -890,10 +890,10 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 	return (ShaderId)m_shaders.size() - 1;
 }
 
-PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipeline_info) {
+PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipeline_info) {
 	m_pipelines.push_back({});
 	Pipeline& pipeline = m_pipelines.back();
-	pipeline.info = *pipeline_info;
+	pipeline.info = pipeline_info;
 
 	const Shader& shader = m_shaders[pipeline.info.shader_id];
 	
@@ -901,8 +901,8 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 
 	VkPipelineInputAssemblyStateCreateInfo assembly_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-		.topology = (VkPrimitiveTopology)pipeline_info->assembly.topology,
-		.primitiveRestartEnable = pipeline_info->assembly.restart_enable
+		.topology = (VkPrimitiveTopology)pipeline_info.assembly.topology,
+		.primitiveRestartEnable = pipeline_info.assembly.restart_enable
 	};
 
 	VkViewport viewport{
@@ -929,16 +929,16 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 
 	VkPipelineRasterizationStateCreateInfo rasterization_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-		.depthClampEnable = pipeline_info->raster.depth_clamp_enable,
-		.rasterizerDiscardEnable = pipeline_info->raster.rasterizer_discard_enable,
-		.polygonMode = (VkPolygonMode)pipeline_info->raster.polygon_mode,
-		.cullMode = (VkCullModeFlags)pipeline_info->raster.cull_mode,
-		.frontFace = (VkFrontFace)pipeline_info->raster.front_face,
-		.depthBiasEnable = pipeline_info->raster.depth_bias_enable,
-		.depthBiasConstantFactor = pipeline_info->raster.depth_bias_constant_factor,
-		.depthBiasClamp = pipeline_info->raster.depth_bias_clamp,
-		.depthBiasSlopeFactor =  pipeline_info->raster.detpth_bias_slope_factor,
-		.lineWidth = pipeline_info->raster.line_width
+		.depthClampEnable = pipeline_info.raster.depth_clamp_enable,
+		.rasterizerDiscardEnable = pipeline_info.raster.rasterizer_discard_enable,
+		.polygonMode = (VkPolygonMode)pipeline_info.raster.polygon_mode,
+		.cullMode = (VkCullModeFlags)pipeline_info.raster.cull_mode,
+		.frontFace = (VkFrontFace)pipeline_info.raster.front_face,
+		.depthBiasEnable = pipeline_info.raster.depth_bias_enable,
+		.depthBiasConstantFactor = pipeline_info.raster.depth_bias_constant_factor,
+		.depthBiasClamp = pipeline_info.raster.depth_bias_clamp,
+		.depthBiasSlopeFactor =  pipeline_info.raster.detpth_bias_slope_factor,
+		.lineWidth = pipeline_info.raster.line_width
 	};
 
 	VkPipelineMultisampleStateCreateInfo multisample_state{
@@ -951,7 +951,8 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
 		.depthWriteEnable = VK_TRUE,
-		.depthCompareOp = VK_COMPARE_OP_LESS,
+		//.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
 		.depthBoundsTestEnable = VK_FALSE,
 		.stencilTestEnable = VK_FALSE
 	};
@@ -972,8 +973,8 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 
 	VkPipelineDynamicStateCreateInfo dynamic_state{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		.dynamicStateCount = pipeline_info->dynamic_states.dynamic_state_count,
-		.pDynamicStates = (VkDynamicState*)pipeline_info->dynamic_states.dynamic_states
+		.dynamicStateCount = pipeline_info.dynamic_states.dynamic_state_count,
+		.pDynamicStates = (VkDynamicState*)pipeline_info.dynamic_states.dynamic_states
 	};
 
 	VkGraphicsPipelineCreateInfo pipeline_create_info{
@@ -991,8 +992,8 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo* pipelin
 		// TODO: Add dynamic states support
 		.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
-		.renderPass = pipeline_info->render_pass_id
-			? m_render_passes[pipeline_info->render_pass_id.value()].render_pass
+		.renderPass = pipeline_info.render_pass_id
+			? m_render_passes[pipeline_info.render_pass_id.value()].render_pass
 			: m_context->swapchain_render_pass(),
 		.subpass = 0
 	};

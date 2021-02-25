@@ -102,10 +102,13 @@ private:
 	double m_prev_time_point = 0.0;
 
 	BufferId m_square_vertex_buffer;
-	uint32_t m_square_vertex_count;
 	BufferId m_square_index_buffer;
 	uint32_t m_square_index_count;
 	IndexType m_square_index_type;
+	BufferId m_skybox_vertex_buffer;
+	BufferId m_skybox_index_buffer;
+	uint32_t m_skybox_index_count;
+	IndexType m_skybox_index_type;
 
 	VulkanGraphicsController m_graphics_controller;
 
@@ -119,10 +122,17 @@ private:
 	ImageId m_depth_attachment;
 	RenderPassId m_render_pass;
 	FramebufferId m_framebuffer;
+	
 	ShaderId m_hdr_shader;
 	PipelineId m_hdr_pipeline;
 	ShaderId m_display_shader;
 	PipelineId m_display_pipeline;
+	ShaderId m_skybox_shader;
+	PipelineId m_skybox_pipeline;
+
+	SamplerId m_skybox_sampler;
+	UniformSetId m_skybox_uniform_set0;
+	UniformSetId m_skybox_uniform_set1;
 
 	SamplerId m_display_sampler;
 	UniformSetId m_display_uniform_set;
@@ -140,6 +150,7 @@ private:
 	
 	ImageInfo m_skybox_image_info;
 	ImageId m_skybox_image;
+	BufferId m_skybox_proj_view_buffer;
 
 	Camera m_camera;
 	BufferId m_proj_view_uniform_buffer;

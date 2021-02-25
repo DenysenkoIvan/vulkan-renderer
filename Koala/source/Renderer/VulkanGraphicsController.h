@@ -216,9 +216,9 @@ struct SamplerInfo {
 	Filter mag_filter = Filter::Linear;
 	Filter min_filter = Filter::Linear;
 	MipMapMode mip_map_mode = MipMapMode::Linear;
-	SamplerAddressMode address_mode_u = SamplerAddressMode::Repeat;
-	SamplerAddressMode address_mode_v = SamplerAddressMode::Repeat;
-	SamplerAddressMode address_mode_w = SamplerAddressMode::Repeat;
+	SamplerAddressMode address_mode_u = SamplerAddressMode::ClampToEdge;
+	SamplerAddressMode address_mode_v = SamplerAddressMode::ClampToEdge;
+	SamplerAddressMode address_mode_w = SamplerAddressMode::ClampToEdge;
 	float mip_lod_bias = 0.0f;
 	bool anisotropy_enable = false;
 	float max_anisotropy = 0.0f;
@@ -260,7 +260,7 @@ public:
 
 	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);	
 	
-	PipelineId pipeline_create(const PipelineInfo* pipeline_info);
+	PipelineId pipeline_create(const PipelineInfo& pipeline_info);
 	
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);

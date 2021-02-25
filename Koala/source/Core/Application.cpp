@@ -9,19 +9,19 @@
 #include <stdexcept>
 #include <vector>
 
-std::vector<float> load_hdr_cube_map(std::string_view filename, int* x, int* y) {
+std::vector<uint8_t> load_cube_map(std::string_view filename, int* x, int* y) {
 	int channels = -1;
 	int rows = -1;
 	int cols = -1;
 
-	float* pixels = stbi_loadf(filename.data(), &rows, &cols, &channels, STBI_rgb_alpha);
+	stbi_uc* pixels = stbi_load(filename.data(), &rows, &cols, &channels, STBI_rgb_alpha);
 
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 
 	size_t map_size = rows * cols * channels;
 
-	std::vector<float> storage;
+	std::vector<uint8_t> storage;
 	storage.reserve(map_size);
 
 	size_t offset = rows / 6 * 4;
@@ -63,7 +63,6 @@ Application::Application(const ApplicationProperties& props) {
 	m_camera.front = glm::vec3(2.0f, 2.0f, 0.0f);
 	m_camera.front= glm::normalize(m_camera.front);
 
-	m_square_vertex_count = 4;
 	float vertices[4 * 4] = {
 		-1.0f, -1.0f, 0.0f, 0.0f,
 		 1.0f, -1.0f, 1.0f, 0.0f,
@@ -78,8 +77,63 @@ Application::Application(const ApplicationProperties& props) {
 		1, 2, 3
 	};
 
-	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, 4 * m_square_vertex_count * sizeof(float));
+	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
 	m_square_index_buffer = m_graphics_controller.index_buffer_create(indices, m_square_index_count * sizeof(uint32_t), m_square_index_type);
+
+	float skybox_vertices[36 * 3] = {
+		-1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		-1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f
+	};
+
+	m_skybox_index_count = 36;
+	m_skybox_index_type = IndexType::Uint32;
+	uint32_t skybox_indices[] = {
+		 0,  1,  2,  3,  4,  5,
+		 6,  7,  8,  9, 10, 11,
+		12, 13, 14, 15, 16, 17,
+		18, 19, 20, 21, 22, 23,
+		24, 25, 26, 27, 28, 29,
+		30, 31, 32, 33, 34, 35
+	};
 
 	m_color_attachment_image_info = {
 		.usage = ImageUsageColorAttachment | ImageUsageSampled,
@@ -90,6 +144,10 @@ Application::Application(const ApplicationProperties& props) {
 		.depth = 1,
 		.layer_count = 1
 	};
+
+	m_skybox_vertex_buffer = m_graphics_controller.vertex_buffer_create(skybox_vertices, sizeof(skybox_vertices));
+	m_skybox_index_buffer = m_graphics_controller.index_buffer_create(skybox_indices, sizeof(skybox_indices), m_skybox_index_type);
+
 
 	m_color_attachment = m_graphics_controller.image_create(nullptr, m_color_attachment_image_info);
 	
@@ -143,6 +201,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_display_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/display.vert.spv"), load_spv("../assets/shaders/display.frag.spv"));
 
+	m_skybox_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/skybox.vert.spv"), load_spv("../assets/shaders/skybox.frag.spv"));
+
 	std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
 
 	PipelineInfo hdr_pipeline_info{};
@@ -159,7 +219,7 @@ Application::Application(const ApplicationProperties& props) {
 	hdr_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 	hdr_pipeline_info.render_pass_id = m_render_pass;
 
-	m_hdr_pipeline = m_graphics_controller.pipeline_create(&hdr_pipeline_info);
+	m_hdr_pipeline = m_graphics_controller.pipeline_create(hdr_pipeline_info);
 
 	PipelineInfo display_pipeline_info{};
 	display_pipeline_info.shader_id = m_display_shader;
@@ -174,7 +234,23 @@ Application::Application(const ApplicationProperties& props) {
 	display_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
 	display_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 
-	m_display_pipeline = m_graphics_controller.pipeline_create(&display_pipeline_info);
+	m_display_pipeline = m_graphics_controller.pipeline_create(display_pipeline_info);
+
+	PipelineInfo skybox_pipeline_info{};
+	skybox_pipeline_info.shader_id = m_skybox_shader;
+	skybox_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
+	skybox_pipeline_info.assembly.restart_enable = false;
+	skybox_pipeline_info.raster.depth_clamp_enable = false;
+	skybox_pipeline_info.raster.rasterizer_discard_enable = false;
+	skybox_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
+	skybox_pipeline_info.raster.cull_mode = CullMode::None;
+	skybox_pipeline_info.raster.depth_bias_enable = false;
+	skybox_pipeline_info.raster.line_width = 1.0f;
+	skybox_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
+	skybox_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
+	skybox_pipeline_info.render_pass_id = m_render_pass;
+
+	m_skybox_pipeline = m_graphics_controller.pipeline_create(skybox_pipeline_info);
 
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
@@ -224,7 +300,8 @@ Application::Application(const ApplicationProperties& props) {
 	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 0.0f));
 	m_model_uniform_buffer = m_graphics_controller.uniform_buffer_create(&model, sizeof(glm::mat4));
 	m_proj_view_uniform_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
-	
+	m_skybox_proj_view_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
+
 	m_texture_image_info = {
 		.usage = ImageUsageSampled | ImageUsageTransferDst,
 		.view_type = ImageViewType::TwoD,
@@ -237,12 +314,12 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_texture = m_graphics_controller.image_create(pixels, m_texture_image_info);
 	
-	std::vector<float> skybox_pixels = load_hdr_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
+	std::vector<uint8_t> skybox_pixels = load_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
 
 	m_skybox_image_info = {
 		.usage = ImageUsageSampled | ImageUsageTransferDst,
 		.view_type = ImageViewType::Cube,
-		.format = Format::RGBA32_SFloat,
+		.format = Format::RGBA8_SRGB,
 		.width = (uint32_t)height,
 		.height = (uint32_t)width / 6,
 		.depth = 1,
@@ -255,6 +332,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_sampler = m_graphics_controller.sampler_create(sampler_info);
 	m_display_sampler = m_graphics_controller.sampler_create(sampler_info);
+
+	m_skybox_sampler = m_graphics_controller.sampler_create(sampler_info);
 
 	std::vector<Uniform> uniform_set0;
 	uniform_set0.reserve(2);
@@ -283,6 +362,24 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_hdr_shader, 0, uniform_set0);
 	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_hdr_shader, 1, uniform_set1);
+
+	std::vector<Uniform> skybox_uniform_set0;
+	Uniform skybox_proj_view_buffer;
+	skybox_proj_view_buffer.type = UniformType::UniformBuffer;
+	skybox_proj_view_buffer.binding = 0;
+	skybox_proj_view_buffer.ids.push_back(m_skybox_proj_view_buffer);
+	skybox_uniform_set0.push_back(skybox_proj_view_buffer);
+	
+	std::vector<Uniform> skybox_uniform_set1;
+	Uniform skybox_texture_uniform;
+	skybox_texture_uniform.type = UniformType::CombinedImageSampler;
+	skybox_texture_uniform.binding = 0;
+	skybox_texture_uniform.ids.push_back(m_skybox_image);
+	skybox_texture_uniform.ids.push_back(m_skybox_sampler);
+	skybox_uniform_set1.push_back(skybox_texture_uniform);
+
+	m_skybox_uniform_set0 = m_graphics_controller.uniform_set_create(m_skybox_shader, 0, skybox_uniform_set0);
+	m_skybox_uniform_set1 = m_graphics_controller.uniform_set_create(m_skybox_shader, 1, skybox_uniform_set1);
 
 	std::vector<Uniform> display_uniforms;
 	Uniform display_texture_buffer;
@@ -378,14 +475,16 @@ void Application::on_update() {
 	m_camera.turn_left(-delta_mouse_x);
 	m_camera.turn_up(delta_mouse_y);
 
+	glm::mat4 view = m_camera.view_matrix();
 	glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.0001f, 1000.0f);
 	proj[1][1] *= -1;
-	glm::mat4 proj_view = proj * m_camera.view_matrix();
+	glm::mat4 proj_view = proj * view;
 	m_graphics_controller.buffer_update(m_proj_view_uniform_buffer, &proj_view);
 
-	//glm::mat4 model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	//m_graphics_controller.buffer_update(m_model_uniform_buffer, &model);
-
+	glm::mat4 view_no_translation = glm::mat4(glm::mat3(view));
+	glm::mat4 skybox_view_proj = proj * view_no_translation;
+	m_graphics_controller.buffer_update(m_skybox_proj_view_buffer, &skybox_view_proj);
+	
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
 
@@ -401,13 +500,20 @@ void Application::on_render() {
 	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_color_attachment_image_info.width, (float)m_color_attachment_image_info.height, 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_image_info.width, m_color_attachment_image_info.height);
 	
-	UniformSetId sets[2] = { m_uniform_set0, m_uniform_set1 };
+	UniformSetId model_sets[2] = { m_uniform_set0, m_uniform_set1 };
 	m_graphics_controller.draw_bind_pipeline(m_hdr_pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffer);
 	m_graphics_controller.draw_bind_index_buffer(m_index_buffer, m_index_type);
-	m_graphics_controller.draw_bind_uniform_sets(m_hdr_pipeline, sets, 2);
+	m_graphics_controller.draw_bind_uniform_sets(m_hdr_pipeline, model_sets, 2);
 	m_graphics_controller.draw_draw_indexed(m_index_count);
 	
+	UniformSetId skybox_sets[2] = { m_skybox_uniform_set0, m_skybox_uniform_set1 };
+	m_graphics_controller.draw_bind_pipeline(m_skybox_pipeline);
+	m_graphics_controller.draw_bind_vertex_buffer(m_skybox_vertex_buffer);
+	m_graphics_controller.draw_bind_index_buffer(m_skybox_index_buffer, m_skybox_index_type);
+	m_graphics_controller.draw_bind_uniform_sets(m_skybox_pipeline, skybox_sets, 2);
+	m_graphics_controller.draw_draw_indexed(m_skybox_index_count);
+
 	m_graphics_controller.draw_end();
 
 
