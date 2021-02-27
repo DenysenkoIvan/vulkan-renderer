@@ -148,15 +148,6 @@ struct ImageInfo {
 	uint32_t layer_count = 1;
 };
 
-struct Viewport {
-	float x;
-	float y;
-	float width;
-	float height;
-	float min_depth;
-	float max_depth;
-};
-
 enum class IndexType : uint32_t {
 	Uint16 = 0,
 	Uint32 = 1
@@ -172,7 +163,8 @@ enum class UniformType : uint32_t {
 struct Uniform {
 	UniformType type;
 	uint32_t binding;
-	std::vector<RenderId> ids;
+	const RenderId* ids;
+	uint32_t id_count;
 };
 
 enum class Filter : uint32_t {
@@ -273,7 +265,7 @@ public:
 
 	SamplerId sampler_create(const SamplerInfo& info);
 
-	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms);
+	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const Uniform* uniforms, uint32_t uniform_count);
 
 private:
 	struct RenderPassAttachmentInfo {
@@ -421,7 +413,7 @@ private:
 
 	// Uniform Set
 	struct UniformSet {
-		std::vector<Uniform> uniforms;
+		std::vector<ImageId> images; // Used to check out if image is in proper layout before descriptor binding operation
 		DescriptorPoolKey pool_key;
 		uint32_t pool_idx;
 		ShaderId shader;

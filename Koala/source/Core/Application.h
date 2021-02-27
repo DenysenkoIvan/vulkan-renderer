@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 
 #include <Core/LayerStack.h>
@@ -81,6 +82,13 @@ public:
 private:
 	void run();
 
+	void create_default_meshes();
+	void create_render_targets();
+	void setup_presentation();
+	std::vector<uint8_t> load_spv(const std::filesystem::path& path);
+	void create_skybox();
+	void create_viking_room();
+
 	void on_window_close(WindowCloseEvent& e);
 	void on_window_resize(WindowResizeEvent& e);
 	void on_mouse_move(MouseMovedEvent& e);
@@ -105,10 +113,10 @@ private:
 	BufferId m_square_index_buffer;
 	uint32_t m_square_index_count;
 	IndexType m_square_index_type;
-	BufferId m_skybox_vertex_buffer;
-	BufferId m_skybox_index_buffer;
-	uint32_t m_skybox_index_count;
-	IndexType m_skybox_index_type;
+	BufferId m_box_vertex_buffer;
+	BufferId m_box_index_buffer;
+	uint32_t m_box_index_count;
+	IndexType m_box_index_type;
 
 	VulkanGraphicsController m_graphics_controller;
 

@@ -433,16 +433,8 @@ void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, Un
 	for (uint32_t i = 0; i < count; i++) {
 		UniformSet& set = m_uniform_sets[set_ids[i]];
 
-		// Transition texture image layout to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-		for (Uniform& uniform : set.uniforms) {
-			if (uniform.type == UniformType::CombinedImageSampler) {
-				for (size_t i = 0; i < uniform.ids.size(); i += 2)
-					image_should_have_layout(m_images[uniform.ids[i]], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-			} else if (uniform.type == UniformType::SampledImage) {
-				for (ImageId id : uniform.ids)
-					image_should_have_layout(m_images[id], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-			}
-		}
+		for (ImageId id : set.images)
+			image_should_have_layout(m_images[id], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	
 		descriptor_sets.push_back(set.descriptor_set);
 	}
@@ -1155,15 +1147,18 @@ SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
 	return (SamplerId)m_samplers.size() - 1;
 }
 
-UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const std::vector<Uniform>& uniforms) {
+UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const Uniform* uniforms, uint32_t uniform_count) {
 	Set& set = *m_shaders[shader_id].info->find_set(set_idx);
+
+	std::vector<ImageId> images;
 
 	std::vector<std::vector<VkDescriptorImageInfo>> image_infos_collector;
 	std::vector<std::vector<VkDescriptorBufferInfo>> buffer_infos_collector;
 	std::vector<VkWriteDescriptorSet> writes;
 
 	DescriptorPoolKey pool_key;
-	for (const Uniform& uniform : uniforms) {
+	for (uint32_t i = 0; i < uniform_count; i++) {
+		const auto& uniform = uniforms[i];
 		auto binding_it = set.find_binding(uniform.binding);
 		
 		if (binding_it == set.bindings.end())
@@ -1182,21 +1177,22 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		case UniformType::CombinedImageSampler: {
 			std::vector<VkDescriptorImageInfo> image_infos;
 
-			for (size_t i = 0; i < uniform.ids.size(); i += 2) {
-				Image& image = m_images[uniform.ids[i]];
+			for (size_t j = 0; j < uniform.id_count; j += 2) {
+				Image& image = m_images[uniform.ids[j]];
 
 				image_should_have_layout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 				VkDescriptorImageInfo image_info{
-					.sampler = m_samplers[uniform.ids[i + 1]].sampler,
+					.sampler = m_samplers[uniform.ids[j + 1]].sampler,
 					.imageView = image.view,
 					.imageLayout = image.current_layout
 				};
 
 				image_infos.push_back(image_info);
+				images.push_back((uint32_t)j);
 			}
 
-			write.descriptorCount = (uint32_t)uniform.ids.size() / 2;
+			write.descriptorCount = uniform.id_count / 2;
 			write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			write.pImageInfo = image_infos.data();
 
@@ -1208,8 +1204,8 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 			throw std::runtime_error("UniformType not supported");
 			std::vector<VkDescriptorImageInfo> image_infos;
 
-			for (size_t i = 0; i < uniform.ids.size(); i++) {
-				Image& image = m_images[uniform.ids[i]];
+			for (size_t j = 0; j < uniform.id_count; j++) {
+				Image& image = m_images[uniform.ids[j]];
 
 				VkDescriptorImageInfo image_info{
 					.imageView = image.view,
@@ -1217,9 +1213,10 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 				};
 
 				image_infos.push_back(image_info);
+				images.push_back((uint32_t)j);
 			}
 
-			write.descriptorCount = (uint32_t)uniform.ids.size();
+			write.descriptorCount = uniform.id_count;
 			write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 			write.pImageInfo = image_infos.data();
 
@@ -1230,8 +1227,8 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		case UniformType::UniformBuffer: {
 			std::vector<VkDescriptorBufferInfo> buffer_infos;
 
-			for (size_t i = 0; i < uniform.ids.size(); i++) {
-				Buffer& buffer = m_buffers[uniform.ids[i]];
+			for (size_t j = 0; j < uniform.id_count; j++) {
+				Buffer& buffer = m_buffers[uniform.ids[j]];
 
 				VkDescriptorBufferInfo buffer_info{
 					.buffer = buffer.buffer,
@@ -1242,7 +1239,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 				buffer_infos.push_back(buffer_info);
 			}
 
-			write.descriptorCount = (uint32_t)uniform.ids.size();
+			write.descriptorCount = uniform.id_count;
 			write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 			write.pBufferInfo = buffer_infos.data();
 			
@@ -1272,7 +1269,6 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		throw std::runtime_error("Failed to allocate descriptor set");
 
 	UniformSet uniform_set{
-		.uniforms = uniforms,
 		.pool_key = pool_key,
 		.pool_idx = pool_idx,
 		.shader = shader_id,
@@ -1441,7 +1437,7 @@ void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkFormat format,
 	std::vector<VkBufferImageCopy> buffer_copy_regions;
 	buffer_copy_regions.reserve(layer_count);
 	
-	uint32_t layer_size = size / layer_count;
+	uint32_t layer_size = (uint32_t)size / layer_count;
 	for (uint32_t i = 0; i < layer_count; i++) {
 		VkBufferImageCopy region{
 			.bufferOffset = i * layer_size,
