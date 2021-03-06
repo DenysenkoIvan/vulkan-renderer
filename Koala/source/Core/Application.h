@@ -11,14 +11,7 @@
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
 
-#include <Renderer/VulkanGraphicsController.h>
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/hash.hpp>
+#include <Renderer/Renderer.h>
 
 int main(int argc, char** argv);
 
@@ -27,46 +20,6 @@ struct ApplicationProperties {
 	uint32_t app_version = 0;
 	uint32_t width = 800;
 	uint32_t height = 480;
-};
-
-struct Vertex {
-	glm::vec3 pos;
-	glm::vec2 tex_pos;
-
-	bool operator==(const Vertex& v) const {
-		return pos == v.pos && tex_pos == v.tex_pos;
-	}
-};
-
-struct Camera {
-	glm::vec3 eye = glm::vec3(0.0f, 0.0f, 0.0f);
-	glm::vec3 front;
-	glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);
-
-	void move_forward(float movement) {
-		eye += front * movement;
-	}
-
-	void move_left(float movement) {
-		glm::vec3 left = glm::cross(up, front);
-		eye += left * movement;
-	}
-
-	void turn_left(float degrees) {
-		glm::mat4 m = glm::rotate(glm::mat4(1.0f), glm::radians(degrees), up);
-		front = m * glm::vec4(front, 1.0f);
-		front = glm::normalize(front);
-	}
-
-	void turn_up(float degrees) {
-		glm::mat4 m = glm::rotate(glm::mat4(1.0f), glm::radians(degrees), glm::cross(up, front));
-		front = m * glm::vec4(front, 1.0f);
-		front = glm::normalize(front);
-	}
-
-	glm::mat4 view_matrix() const {
-		return glm::lookAt(eye, eye + front, up);
-	}
 };
 
 class Application {
@@ -82,11 +35,6 @@ public:
 private:
 	void run();
 
-	void create_default_meshes();
-	void create_render_targets();
-	void setup_presentation();
-	std::vector<uint8_t> load_spv(const std::filesystem::path& path);
-	void create_skybox();
 	void create_viking_room();
 
 	void on_window_close(WindowCloseEvent& e);
@@ -109,61 +57,12 @@ private:
 	bool m_running = true;
 	double m_prev_time_point = 0.0;
 
-	BufferId m_square_vertex_buffer;
-	BufferId m_square_index_buffer;
-	uint32_t m_square_index_count;
-	IndexType m_square_index_type;
-	BufferId m_box_vertex_buffer;
-	BufferId m_box_index_buffer;
-	uint32_t m_box_index_count;
-	IndexType m_box_index_type;
-
-	VulkanGraphicsController m_graphics_controller;
+	Renderer m_renderer;
+	Camera m_camera;
 
 	Resolution m_monitor_resolution;
-	float m_monitor_aspect_ratio = 16 / 9;
-	
-	glm::vec4 m_clear_color = { 1.0f, 0.0f, 1.0f, 1.0f };
-	ImageInfo m_color_attachment_image_info;
-	ImageInfo m_depth_attachment_image_info;
-	ImageId m_color_attachment;
-	ImageId m_depth_attachment;
-	RenderPassId m_render_pass;
-	FramebufferId m_framebuffer;
-	
-	ShaderId m_hdr_shader;
-	PipelineId m_hdr_pipeline;
-	ShaderId m_display_shader;
-	PipelineId m_display_pipeline;
-	ShaderId m_skybox_shader;
-	PipelineId m_skybox_pipeline;
-
-	SamplerId m_skybox_sampler;
-	UniformSetId m_skybox_uniform_set0;
-	UniformSetId m_skybox_uniform_set1;
-
-	SamplerId m_display_sampler;
-	UniformSetId m_display_uniform_set;
-
-	BufferId m_vertex_buffer;
-	BufferId m_index_buffer;
-	IndexType m_index_type;
-	uint32_t m_index_count;
-	BufferId m_model_uniform_buffer;
-	ImageInfo m_texture_image_info;
-	ImageId m_texture;
-	SamplerId m_sampler;
-	UniformSetId m_uniform_set0;
-	UniformSetId m_uniform_set1;
-	
-	ImageInfo m_skybox_image_info;
-	ImageId m_skybox_image;
-	BufferId m_skybox_proj_view_buffer;
-
-	Camera m_camera;
-	BufferId m_proj_view_uniform_buffer;
-	std::vector<Vertex> m_vertices;
-	std::vector<uint32_t> m_indices;
+	SkyboxId m_skybox;
+	MeshId m_viking_room_mesh;
 };
 
 namespace std {

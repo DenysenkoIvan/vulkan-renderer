@@ -7,33 +7,15 @@
 
 class TriangleRender : public Layer {
 public:
+	void on_attach() override {}
 
-	void on_attach() override {
-		
-		
-	}
+	void on_detach() override {}
 
-	void on_detach() override {
-		
-	}
+	void on_update() override {}
 
-	void on_update() override {
-	
-	}
+	void on_render() override {}
 
-	void on_render() override {
-
-	}
-
-	bool on_event(Event& e) override {	
-		std::cout << e.stringify() << '\n';
-		return true;
-	}
-
-private:
-	//std::shared_ptr<Shader> m_shader;
-	//std::shared_ptr<VertexBuffer> m_vertex_buffer;
-	//std::shared_ptr<IndexBuffer> m_index_buffer;
+	bool on_event(Event& e) override { return true; }
 };
 
 class Sandbox : public Application {
@@ -43,9 +25,6 @@ public:
 	{
 		push_layer<TriangleRender>();
 	}
-
-private:
-
 };
 
 std::unique_ptr<Application> create_application() {

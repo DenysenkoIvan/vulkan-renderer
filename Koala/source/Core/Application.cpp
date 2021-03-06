@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <vector>
 
-std::vector<uint8_t> load_cube_map(std::string_view filename, int* x, int* y) {
+static std::vector<uint8_t> load_cube_map(std::string_view filename, int* x, int* y) {
 	int channels = -1;
 	int rows = -1;
 	int cols = -1;
@@ -52,290 +52,39 @@ Application::Application(const ApplicationProperties& props) {
 	window_props.callback = ([this](Event& e) { this->on_event(e); });
 
 	m_window.initialize(window_props);
-	m_graphics_controller.create(m_window.context());
 
-	m_monitor_resolution = Window::get_monitor_resolution();
-	m_monitor_aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
+	m_renderer.create(m_window.context());
+	m_renderer.set_resolution(1280, 720);
 
 	m_prev_mouse_x = props.width / 2;
 	m_prev_mouse_y = props.height / 2;
 
 	m_camera.front = glm::vec3(2.0f, 2.0f, 0.0f);
-	m_camera.front= glm::normalize(m_camera.front);
+	m_camera.front = glm::normalize(m_camera.front);
 
-	create_default_meshes();
-	create_render_targets();
-	setup_presentation();
-	create_skybox();
+	m_monitor_resolution = Window::get_monitor_resolution();
+	m_camera.aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
+	m_camera.near = 0.1f;
+	m_camera.far = 1'000'000.0f;
+
 	create_viking_room();
-}
-
-void Application::create_default_meshes() {
-	// Create square that occupies the whole screen
-	float vertices[4 * 4] = {
-		-1.0f, -1.0f, 0.0f, 0.0f,
-		 1.0f, -1.0f, 1.0f, 0.0f,
-		-1.0f,  1.0f, 0.0f, 1.0f,
-		 1.0f,  1.0f, 1.0f, 1.0f
-	};
-
-	m_square_index_count = 6;
-	m_square_index_type = IndexType::Uint32;
-	uint32_t indices[6] = {
-		0, 1, 2,
-		1, 2, 3
-	};
-
-	m_square_vertex_buffer = m_graphics_controller.vertex_buffer_create(vertices, sizeof(vertices));
-	m_square_index_buffer = m_graphics_controller.index_buffer_create(indices, m_square_index_count * sizeof(uint32_t), m_square_index_type);
-
-	// Create 1 * 1 * 1 box
-	float box_vertices[36 * 3] = {
-		-1.0f,  1.0f, -1.0f,
-		-1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-
-		-1.0f, -1.0f,  1.0f,
-		-1.0f, -1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f,  1.0f,
-		-1.0f, -1.0f,  1.0f,
-
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-
-		-1.0f, -1.0f,  1.0f,
-		-1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f, -1.0f,  1.0f,
-		-1.0f, -1.0f,  1.0f,
-
-		-1.0f,  1.0f, -1.0f,
-		 1.0f,  1.0f, -1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		-1.0f,  1.0f,  1.0f,
-		-1.0f,  1.0f, -1.0f,
-
-		-1.0f, -1.0f, -1.0f,
-		-1.0f, -1.0f,  1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		-1.0f, -1.0f,  1.0f,
-		 1.0f, -1.0f,  1.0f
-	};
-
-	m_box_index_count = 36;
-	m_box_index_type = IndexType::Uint32;
-	uint32_t box_indices[] = {
-		 0,  1,  2,  3,  4,  5,
-		 6,  7,  8,  9, 10, 11,
-		12, 13, 14, 15, 16, 17,
-		18, 19, 20, 21, 22, 23,
-		24, 25, 26, 27, 28, 29,
-		30, 31, 32, 33, 34, 35
-	};
-
-	m_box_vertex_buffer = m_graphics_controller.vertex_buffer_create(box_vertices, sizeof(box_vertices));
-	m_box_index_buffer = m_graphics_controller.index_buffer_create(box_indices, sizeof(box_indices), m_box_index_type);
-}
-
-void Application::create_render_targets() {
-	// Create offscreen render target
-	m_color_attachment_image_info = {
-		.usage = ImageUsageColorAttachment | ImageUsageSampled,
-		.view_type = ImageViewType::TwoD,
-		.format = Format::RGBA32_SFloat,
-		.width = 1280,
-		.height = 720,
-		.depth = 1,
-		.layer_count = 1
-	};
-
-	m_color_attachment = m_graphics_controller.image_create(nullptr, m_color_attachment_image_info);
-
-	m_depth_attachment_image_info = {
-		.usage = ImageUsageDepthStencilAttachment,
-		.view_type = ImageViewType::TwoD,
-		.format = Format::D32_SFloat,
-		.width = 1280,
-		.height = 720,
-		.depth = 1,
-		.layer_count = 1
-	};
-
-	m_depth_attachment = m_graphics_controller.image_create(nullptr, m_depth_attachment_image_info);
-
-	std::array<RenderPassAttachment, 2> attachments{};
-	attachments[0].format = m_color_attachment_image_info.format;
-	attachments[0].usage = m_color_attachment_image_info.usage;
-	attachments[0].initial_action = InitialAction::Clear;
-	attachments[0].final_action = FinalAction::Store;
-	attachments[1].format = m_depth_attachment_image_info.format;
-	attachments[1].usage = m_depth_attachment_image_info.usage;
-	attachments[1].initial_action = InitialAction::Clear;
-	attachments[1].final_action = FinalAction::DontCare;
-
-	m_render_pass = m_graphics_controller.render_pass_create(attachments.data(), (uint32_t)attachments.size());
-
-	ImageId ids[2] = { m_color_attachment, m_depth_attachment };
-
-	m_framebuffer = m_graphics_controller.framebuffer_create(m_render_pass, ids, 2);
-
-	
-}
-
-void Application::setup_presentation() {
-	m_display_shader = m_graphics_controller.shader_create(load_spv("../assets/shaders/display.vert.spv"), load_spv("../assets/shaders/display.frag.spv"));
-
-	std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
-
-	PipelineInfo display_pipeline_info{};
-	display_pipeline_info.shader_id = m_display_shader;
-	display_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
-	display_pipeline_info.assembly.restart_enable = false;
-	display_pipeline_info.raster.depth_clamp_enable = false;
-	display_pipeline_info.raster.rasterizer_discard_enable = false;
-	display_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
-	display_pipeline_info.raster.cull_mode = CullMode::None;
-	display_pipeline_info.raster.depth_bias_enable = false;
-	display_pipeline_info.raster.line_width = 1.0f;
-	display_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
-	display_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
-
-	m_display_pipeline = m_graphics_controller.pipeline_create(display_pipeline_info);
-
-	SamplerInfo sampler_info{};
-
-	m_display_sampler = m_graphics_controller.sampler_create(sampler_info);
-
-	RenderId binding_0_set_0_ids[2] = { m_color_attachment, m_display_sampler };
-
-	std::array<Uniform, 1> uniform_set0;
-	uniform_set0[0].type = UniformType::CombinedImageSampler;
-	uniform_set0[0].binding = 0;
-	uniform_set0[0].ids = binding_0_set_0_ids;
-	uniform_set0[0].id_count = 2;
-
-	m_display_uniform_set = m_graphics_controller.uniform_set_create(m_display_shader, 0, uniform_set0.data(), (uint32_t)uniform_set0.size());
-}
-
-std::vector<uint8_t> Application::load_spv(const std::filesystem::path& path) {
-	if (!std::filesystem::exists(path))
-		throw std::runtime_error("Shader doesn't exist");
-
-	size_t code_size = std::filesystem::file_size(path);
-	size_t zeros_count = (4 - (code_size % 4)) % 4;
-
-	std::vector<uint8_t> spv_code;
-	spv_code.reserve(code_size + zeros_count);
-
-	std::basic_ifstream<uint8_t> spv_file(path, std::ios::binary);
-
-	spv_code.insert(spv_code.end(), std::istreambuf_iterator<uint8_t>(spv_file), std::istreambuf_iterator<uint8_t>());
-	spv_code.insert(spv_code.end(), zeros_count, 0);
-
-	return spv_code;
-}
-
-void Application::create_skybox() {
-	m_skybox_shader = m_graphics_controller.shader_create(
-		load_spv("../assets/shaders/skybox.vert.spv"),
-		load_spv("../assets/shaders/skybox.frag.spv")
-	);
-
-	std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
-
-	PipelineInfo skybox_pipeline_info{};
-	skybox_pipeline_info.shader_id = m_skybox_shader;
-	skybox_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
-	skybox_pipeline_info.assembly.restart_enable = false;
-	skybox_pipeline_info.raster.depth_clamp_enable = false;
-	skybox_pipeline_info.raster.rasterizer_discard_enable = false;
-	skybox_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
-	skybox_pipeline_info.raster.cull_mode = CullMode::None;
-	skybox_pipeline_info.raster.depth_bias_enable = false;
-	skybox_pipeline_info.raster.line_width = 1.0f;
-	skybox_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
-	skybox_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
-	skybox_pipeline_info.render_pass_id = m_render_pass;
-
-	m_skybox_pipeline = m_graphics_controller.pipeline_create(skybox_pipeline_info);
-
-	m_skybox_proj_view_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
 
 	int width = 0, height = 0;
 	std::vector<uint8_t> skybox_pixels = load_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
 
-	m_skybox_image_info = {
-		.usage = ImageUsageSampled | ImageUsageTransferDst,
-		.view_type = ImageViewType::Cube,
-		.format = Format::RGBA8_SRGB,
-		.width = (uint32_t)height,
-		.height = (uint32_t)width / 6,
-		.depth = 1,
-		.layer_count = 6
+	TextureSpecification skybox_texture{
+		.width = (uint32_t)width,
+		.height = (uint32_t)height,
+		.data = skybox_pixels.data()
 	};
 
-	m_skybox_image = m_graphics_controller.image_create(skybox_pixels.data(), m_skybox_image_info);
-
-	SamplerInfo sampler_info{};
-
-	m_skybox_sampler = m_graphics_controller.sampler_create(sampler_info);
-
-	RenderId uniform_0_set_0_ids[1] = { m_skybox_proj_view_buffer };
-
-	std::array<Uniform, 1> skybox_uniform_set0;
-	skybox_uniform_set0[0].type = UniformType::UniformBuffer;
-	skybox_uniform_set0[0].binding = 0;
-	skybox_uniform_set0[0].ids = uniform_0_set_0_ids;
-	skybox_uniform_set0[0].id_count = 1;
-
-	RenderId uniform_0_set_1_ids[2] = { m_skybox_image, m_skybox_sampler };
-
-	std::array<Uniform, 1> skybox_uniform_set1;
-	skybox_uniform_set1[0].type = UniformType::CombinedImageSampler;
-	skybox_uniform_set1[0].binding = 0;
-	skybox_uniform_set1[0].ids = uniform_0_set_1_ids;
-	skybox_uniform_set1[0].id_count = 2;
-
-	m_skybox_uniform_set0 = m_graphics_controller.uniform_set_create(m_skybox_shader, 0, skybox_uniform_set0.data(), (uint32_t)skybox_uniform_set0.size());
-	m_skybox_uniform_set1 = m_graphics_controller.uniform_set_create(m_skybox_shader, 1, skybox_uniform_set1.data(), (uint32_t)skybox_uniform_set1.size());
+	SkyboxId skybox = m_renderer.skybox_create(skybox_texture);
 }
 
 void Application::create_viking_room() {
-	m_hdr_shader = m_graphics_controller.shader_create(
-		load_spv("../assets/shaders/vertex.spv"),
-		load_spv("../assets/shaders/fragment.spv")
-	);
-
-	std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
-
-	PipelineInfo hdr_pipeline_info{};
-	hdr_pipeline_info.shader_id = m_hdr_shader;
-	hdr_pipeline_info.assembly.topology = PrimitiveTopology::TriangleList;
-	hdr_pipeline_info.assembly.restart_enable = false;
-	hdr_pipeline_info.raster.depth_clamp_enable = false;
-	hdr_pipeline_info.raster.rasterizer_discard_enable = false;
-	hdr_pipeline_info.raster.polygon_mode = PolygonMode::Fill;
-	hdr_pipeline_info.raster.cull_mode = CullMode::None;
-	hdr_pipeline_info.raster.depth_bias_enable = false;
-	hdr_pipeline_info.raster.line_width = 1.0f;
-	hdr_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
-	hdr_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
-	hdr_pipeline_info.render_pass_id = m_render_pass;
-
-	m_hdr_pipeline = m_graphics_controller.pipeline_create(hdr_pipeline_info);
-
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+	
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
@@ -362,18 +111,13 @@ void Application::create_viking_room() {
 			};
 
 			if (uniqueVertices.count(vertex) == 0) {
-				uniqueVertices[vertex] = static_cast<uint32_t>(m_vertices.size());
-				m_vertices.push_back(vertex);
+				uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+				vertices.push_back(vertex);
 			}
 
-			m_indices.push_back(uniqueVertices[vertex]);
+			indices.push_back(uniqueVertices[vertex]);
 		}
 	}
-
-	m_vertex_buffer = m_graphics_controller.vertex_buffer_create(m_vertices.data(), m_vertices.size() * sizeof(Vertex));
-	m_index_type = IndexType::Uint32;
-	m_index_count = (uint32_t)m_indices.size();
-	m_index_buffer = m_graphics_controller.index_buffer_create(m_indices.data(), m_indices.size() * sizeof(uint32_t), m_index_type);
 
 	int width = 0, height = 0, channels = 0;
 	stbi_uc* pixels = stbi_load("../assets/models/viking_room.png", &width, &height, &channels, STBI_rgb_alpha);
@@ -381,52 +125,20 @@ void Application::create_viking_room() {
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 
-	m_texture_image_info = {
-		.usage = ImageUsageSampled | ImageUsageTransferDst,
-		.view_type = ImageViewType::TwoD,
-		.format = Format::RGBA8_SRGB,
+	TextureSpecification texture_spec{
 		.width = (uint32_t)width,
 		.height = (uint32_t)height,
-		.depth = 1,
-		.layer_count = 1
+		.data = pixels
 	};
 
-	m_texture = m_graphics_controller.image_create(pixels, m_texture_image_info);
-
-	SamplerInfo sampler_info{};
-
-	m_sampler = m_graphics_controller.sampler_create(sampler_info);
-
+	m_viking_room_mesh = m_renderer.mesh_create(vertices, indices, texture_spec);
+	
 	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 0.0f));
-	m_model_uniform_buffer = m_graphics_controller.uniform_buffer_create(&model, sizeof(glm::mat4));
-	m_proj_view_uniform_buffer = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
-
-	std::array<Uniform, 2> uniform_set0;
-	// Projection-View Matrix
-	uniform_set0[0].type = UniformType::UniformBuffer;
-	uniform_set0[0].binding = 0;
-	uniform_set0[0].ids = &m_proj_view_uniform_buffer;
-	uniform_set0[0].id_count = 1;
-	// Model Matrix
-	uniform_set0[1].type = UniformType::UniformBuffer;
-	uniform_set0[1].binding = 1;
-	uniform_set0[1].ids = &m_model_uniform_buffer;
-	uniform_set0[1].id_count = 1;
-
-	RenderId binding_0_set_1_ids[2] = { m_texture, m_sampler };
-
-	std::array<Uniform, 1> uniform_set1;
-	uniform_set1[0].type = UniformType::CombinedImageSampler;
-	uniform_set1[0].binding = 0;
-	uniform_set1[0].ids = binding_0_set_1_ids;
-	uniform_set1[0].id_count = 2;
-
-	m_uniform_set0 = m_graphics_controller.uniform_set_create(m_hdr_shader, 0, uniform_set0.data(), (uint32_t)uniform_set0.size());
-	m_uniform_set1 = m_graphics_controller.uniform_set_create(m_hdr_shader, 1, uniform_set1.data(), (uint32_t)uniform_set1.size());
+	m_renderer.mesh_update_model_matrix(m_viking_room_mesh, model);
 }
 
 Application::~Application() {
-	m_graphics_controller.destroy();
+	m_renderer.destroy();
 }
 
 void Application::on_event(Event& e) {
@@ -460,13 +172,7 @@ void Application::on_window_close(WindowCloseEvent& e) {
 }
 
 void Application::on_window_resize(WindowResizeEvent& e) {
-	m_graphics_controller.resize(e.width(), e.height());
-	
-	glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.1f, 10000.0f);
-	proj[1][1] *= -1;
-	glm::mat4 proj_view = proj * m_camera.view_matrix();
-
-	m_graphics_controller.buffer_update(m_proj_view_uniform_buffer, &proj_view);
+	m_camera.aspect_ratio = (float)e.width() / (float)e.height();
 }
 
 void Application::on_mouse_move(MouseMovedEvent& e) {
@@ -507,16 +213,6 @@ void Application::on_update() {
 	m_camera.turn_left(-delta_mouse_x);
 	m_camera.turn_up(delta_mouse_y);
 
-	glm::mat4 view = m_camera.view_matrix();
-	glm::mat4 proj = glm::perspective(glm::radians(45.0f), m_monitor_aspect_ratio, 0.0001f, 1000.0f);
-	proj[1][1] *= -1;
-	glm::mat4 proj_view = proj * view;
-	m_graphics_controller.buffer_update(m_proj_view_uniform_buffer, &proj_view);
-
-	glm::mat4 view_no_translation = glm::mat4(glm::mat3(view));
-	glm::mat4 skybox_view_proj = proj * view_no_translation;
-	m_graphics_controller.buffer_update(m_skybox_proj_view_buffer, &skybox_view_proj);
-	
 	for (const auto& layer : m_layer_stack)
 		layer->on_update();
 
@@ -526,45 +222,12 @@ void Application::on_update() {
 }
 
 void Application::on_render() {
-	glm::vec4 clear_values[2] = { { 0.9f, 0.7f, 0.8f, 1.0f }, { 1.0f, 0.0f, 0.0f, 0.0f } };
-	m_graphics_controller.draw_begin(m_framebuffer, clear_values, 2);
-	
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_color_attachment_image_info.width, (float)m_color_attachment_image_info.height, 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_color_attachment_image_info.width, m_color_attachment_image_info.height);
-	
-	UniformSetId model_sets[2] = { m_uniform_set0, m_uniform_set1 };
-	m_graphics_controller.draw_bind_pipeline(m_hdr_pipeline);
-	m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffer);
-	m_graphics_controller.draw_bind_index_buffer(m_index_buffer, m_index_type);
-	m_graphics_controller.draw_bind_uniform_sets(m_hdr_pipeline, model_sets, 2);
-	m_graphics_controller.draw_draw_indexed(m_index_count);
-	
-	UniformSetId skybox_sets[2] = { m_skybox_uniform_set0, m_skybox_uniform_set1 };
-	m_graphics_controller.draw_bind_pipeline(m_skybox_pipeline);
-	m_graphics_controller.draw_bind_vertex_buffer(m_box_vertex_buffer);
-	m_graphics_controller.draw_bind_index_buffer(m_box_index_buffer, m_box_index_type);
-	m_graphics_controller.draw_bind_uniform_sets(m_skybox_pipeline, skybox_sets, 2);
-	m_graphics_controller.draw_draw_indexed(m_box_index_count);
+	m_renderer.begin_frame(m_camera);
 
-	m_graphics_controller.draw_end();
+	m_renderer.draw_mesh(m_viking_room_mesh);
+	m_renderer.draw_skybox(m_skybox);
 
-
-	m_graphics_controller.draw_begin_for_screen(m_clear_color);
-	
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_window.width(), (float)m_window.height(), 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_window.width(), m_window.height());
-	
-	UniformSetId display_sets[1] = { m_display_uniform_set };
-	m_graphics_controller.draw_bind_pipeline(m_display_pipeline);
-	m_graphics_controller.draw_bind_vertex_buffer(m_square_vertex_buffer);
-	m_graphics_controller.draw_bind_index_buffer(m_square_index_buffer, m_square_index_type);
-	m_graphics_controller.draw_bind_uniform_sets(m_display_pipeline, display_sets, 1);
-	m_graphics_controller.draw_draw_indexed(m_square_index_count);
-	
-	m_graphics_controller.draw_end_for_screen();
-	
-
-	m_graphics_controller.end_frame();
+	m_renderer.end_frame(m_window.width(), m_window.height());
 
 	for (const auto& layer : m_layer_stack)
 		layer->on_render();

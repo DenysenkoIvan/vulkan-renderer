@@ -15,25 +15,15 @@ Window::~Window() {
 	if (s_windows_created_count == 0)
 		terminate_glfw();
 
-	m_context->destroy();
+	m_window_info.context->destroy();
 
-	m_context.release();
+	m_window_info.context.release();
 }
 
 Resolution Window::get_monitor_resolution() {
 	const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
 
 	return { (uint32_t)mode->width, (uint32_t)mode->height };
-}
-
-int Window::width() {
-	glfwGetWindowSize(m_window, &m_width, &m_height);
-	return m_width;
-}
-
-int Window::height() {
-	glfwGetWindowSize(m_window, &m_width, &m_height);
-	return m_height;
 }
 
 bool Window::is_minimized() {
@@ -50,9 +40,8 @@ void Window::initialize(const WindowProperties& window_props) {
 
 	init_window(window_props);
 
-	// TODO: Refactor
-	m_context = std::make_unique<VulkanContext>();
-	m_context->create(m_window);
+	m_window_info.context = std::make_unique<VulkanContext>();
+	m_window_info.context->create(m_window);
 }
 
 void Window::on_update() {
@@ -60,84 +49,86 @@ void Window::on_update() {
 }
 
 void Window::init_window(const WindowProperties& window_props) {
-	m_width = window_props.width;
-	m_height = window_props.height;
+	m_window_info.width = window_props.width;
+	m_window_info.height = window_props.height;
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	m_window = glfwCreateWindow(m_width, m_height, window_props.title.data(), nullptr, nullptr);
+	m_window = glfwCreateWindow(m_window_info.width, m_window_info.height, window_props.title.data(), nullptr, nullptr);
 	if (!m_window)
 		throw std::runtime_error("Failed to create a window");
 
 	glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
-	m_callback = window_props.callback;
+	m_window_info.callback = window_props.callback;
 
-	glfwSetWindowUserPointer(m_window, &m_callback);
+	glfwSetWindowUserPointer(m_window, &m_window_info);
 
 	glfwSetWindowCloseCallback(m_window, [](GLFWwindow *window) {
-		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
+		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
 		WindowCloseEvent e;
-		callback(e);
+		window_info.callback(e);
 	});
 
 	glfwSetWindowSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
-		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
+		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
 		if (glfwGetWindowAttrib(window, GLFW_ICONIFIED))
 			return;
 
-		//this->m_width = width;
-		//this->m_height = height;
+		window_info.context->resize(width, height);
+
+		window_info.width = width;
+		window_info.height = height;
 
 		WindowResizeEvent e(width, height);
-		callback(e);
+		window_info.callback(e);
 	});
 
 	glfwSetKeyCallback(m_window, [](GLFWwindow *window, int key, int scancode, int action, int mods) {
-		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
+		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
 		switch (action) {
 			case GLFW_PRESS:
 			{
 				KeyPressedEvent e(key, 0);
-				callback(e);
+				window_info.callback(e);
 				break;
 			}
 			case GLFW_RELEASE:
 			{
 				KeyReleasedEvent e(key);
-				callback(e);
+				window_info.callback(e);
 				break;
 			}
 			case GLFW_REPEAT:
 			{
 				KeyPressedEvent e(key, 1);
-				callback(e);
+				window_info.callback(e);
 				break;
 			}
 		}
 	});
 
 	glfwSetCursorPosCallback(m_window, [](GLFWwindow* window, double xpos, double ypos) {
-		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
+		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
 		MouseMovedEvent e(xpos, ypos);
-		callback(e);
+		window_info.callback(e);
 	});
 
 	glfwSetMouseButtonCallback(m_window, [](GLFWwindow* window, int button, int action, int mods) {
-		Event::event_handler_fn& callback = *(Event::event_handler_fn*)glfwGetWindowUserPointer(window);
+		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
 		switch (action) {
 			case GLFW_PRESS: {
 				MouseButtonPressedEvent e(button);
-				callback(e);
+				window_info.callback(e);
 				break;
 			}
 			case GLFW_RELEASE: {
 				MouseButtonReleasedEvent e(button);
-				callback(e);
+				window_info.callback(e);
 				break;
 			}
 		}

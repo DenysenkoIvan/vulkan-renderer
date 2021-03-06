@@ -311,7 +311,7 @@ void VulkanGraphicsController::destroy() {
 
 void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
 	
-	m_context->resize(width, height);
+	//m_context->resize(width, height);
 
 }
 

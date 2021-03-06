@@ -30,8 +30,8 @@ public:
 
 	static Resolution get_monitor_resolution();
 
-	int width();
-	int height();
+	int width() const { return m_window_info.width; }
+	int height() const { return m_window_info.height; }
 
 	bool is_minimized();
 
@@ -39,7 +39,7 @@ public:
 	void on_update();
 
 	GLFWwindow* get_GLFWwindow() const { return m_window; }
-	VulkanContext* context() const { return m_context.get(); }
+	VulkanContext* context() const { return m_window_info.context.get(); }
 
 private:
 	void init_window(const WindowProperties& window_props);
@@ -51,10 +51,12 @@ private:
 
 	static int s_windows_created_count;
 private:
-	Event::event_handler_fn m_callback;
+	struct WindowInfo {
+		Event::event_handler_fn callback;
+		int width;
+		int height;
+		std::unique_ptr<VulkanContext> context;
+	} m_window_info;
 	GLFWwindow* m_window = nullptr;
-	int m_width;
-	int m_height;
 
-	std::unique_ptr<VulkanContext> m_context;
 };
