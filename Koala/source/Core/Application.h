@@ -59,10 +59,12 @@ private:
 
 	Renderer m_renderer;
 	Camera m_camera;
+	Camera m_directional_light;
 
 	Resolution m_monitor_resolution;
 	SkyboxId m_skybox;
 	MeshId m_viking_room_mesh;
+	glm::vec3 m_viking_room_pos;
 };
 
 namespace std {

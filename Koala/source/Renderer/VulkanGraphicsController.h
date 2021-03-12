@@ -227,8 +227,6 @@ public:
 	void create(VulkanContext* context);
 	void destroy();
 
-	void resize(uint32_t width, uint32_t height);
-
 	void end_frame();
 	
 	void draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count);
@@ -243,14 +241,14 @@ public:
 	void draw_bind_pipeline(PipelineId pipeline_id);
 	void draw_bind_vertex_buffer(BufferId buffer_id);
 	void draw_bind_index_buffer(BufferId buffer_id, IndexType index_type);
-	void draw_bind_uniform_sets(PipelineId pipeline_id, UniformSetId* set_ids, uint32_t count);
+	void draw_bind_uniform_sets(PipelineId pipeline_id, uint32_t first_set, const UniformSetId* set_ids, uint32_t count);
 	void draw_draw_indexed(uint32_t index_count);
 
 	RenderPassId render_pass_create(const RenderPassAttachment* attachments, uint32_t count);
 
 	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
 
-	ShaderId shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv);	
+	ShaderId shader_create(const void* vertex_spv, uint32_t vert_size, const void* fragment_spv, uint32_t frag_size);
 	
 	PipelineId pipeline_create(const PipelineInfo& pipeline_info);
 	
@@ -292,42 +290,48 @@ private:
 	std::vector<Framebuffer> m_framebuffers;
 
 	// Shader	
-	struct Set {
+	struct SetInfo {
 		uint32_t set;
 		std::vector<VkDescriptorSetLayoutBinding> bindings;
 
 		std::vector<VkDescriptorSetLayoutBinding>::iterator find_binding(uint32_t binding_idx) {
-			return std::find_if(bindings.begin(), bindings.end(), [binding_idx](const auto& binding) { return binding.binding == binding_idx; });
-		}
+			return std::find_if(bindings.begin(), bindings.end(), [binding_idx](const auto& binding) {
+				return binding.binding == binding_idx;
+			});
+		};
 	};
 
-	struct ShaderInfo {
-		std::vector<Set> sets;
-		std::vector<VkDescriptorSetLayout> set_layouts;
+	struct StageInfo {
+		std::vector<char> entry;
+		VkShaderModule module;
+	};
+
+	struct InputVarsInfo {
 		std::vector<VkVertexInputAttributeDescription> attribute_descriptions;
 		VkVertexInputBindingDescription binding_description;
-		std::string vertex_entry;
-		std::string fragment_entry;
-		VkShaderModule vertex_module;
-		VkShaderModule fragment_module;
-
-		std::vector<Set>::iterator find_set(uint32_t set_id) {
-			return std::find_if(sets.begin(), sets.end(), [set_id](const Set& set) { return set.set == set_id; });
-		}
 	};
 
 	struct Shader {
-		std::unique_ptr<ShaderInfo> info;
+		std::vector<SetInfo> sets;
+		std::vector<StageInfo> stages;
+		InputVarsInfo input_vars_info;
 
-		std::array<VkPipelineShaderStageCreateInfo, 2> stage_create_infos;
+		std::vector<VkDescriptorSetLayout> set_layouts;
+		std::vector<VkPipelineShaderStageCreateInfo> stage_create_infos;
 		VkPipelineVertexInputStateCreateInfo vertex_input_create_info;
 		VkPipelineLayout pipeline_layout;
+
+		std::vector<SetInfo>::iterator find_set(uint32_t set_idx) {
+			return std::find_if(sets.begin(), sets.end(), [set_idx](const auto& set) {
+				return set.set == set_idx;
+			});
+		}
 	};
 
 	// Pipeline
 	struct Pipeline {
 		PipelineInfo info;
-		VkPipelineLayout layout;
+		VkPipelineLayout layout; // Not owned
 		VkPipeline pipeline;
 	};
 

@@ -10,10 +10,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/hash.hpp>
 
+#include <optional>
+
 using SkyboxId = uint32_t;
 using MeshId = uint32_t;
-
-struct Camera;
 
 struct Vertex {
 	glm::vec3 pos;
@@ -78,6 +78,9 @@ public:
 	void destroy();
 
 	void set_resolution(uint32_t width, uint32_t height);
+	void set_shadow_map_resolution(uint32_t width, uint32_t height);
+
+	void set_directional_light(const Camera& camera);
 
 	void begin_frame(const Camera& camera);
 	void end_frame(uint32_t width, uint32_t height);
@@ -95,22 +98,33 @@ private:
 
 	// Render Target
 	struct RenderTarget {
-		ImageInfo color_attachment_image_info;
-		ImageInfo depth_attachment_image_info;
+		std::vector<ImageInfo> image_infos;
+		std::vector<ImageId> images;
 
 		RenderPassId render_pass;
 		FramebufferId framebuffer;
+	};
 
-		ImageId color_attachment;
-		ImageId depth_attachment;
+	RenderTarget m_offscreen_render_target;
+	RenderTarget m_shadow_map_target;
 
+	struct ScreenPresentation {
 		ShaderId shader;
 		PipelineId pipeline;
 		SamplerId sampler;
-		UniformSetId uniform_set;
+		UniformSetId uniform_set_0;
 	};
 
-	RenderTarget m_render_target;
+	ScreenPresentation m_screen_presentation;
+
+	struct ShadowGeneration {
+		ShaderId shader;
+		PipelineId pipeline;
+		BufferId light_world_matrix;
+		UniformSetId shadow_gen_uniform_set_0;
+	};
+
+	ShadowGeneration m_shadow_generation;
 
 	// Defalut shapes
 	struct Shape {
@@ -147,13 +161,34 @@ private:
 
 		BufferId model_uniform_buffer;
 		ImageId texture;
-		SamplerId sampler;
 
-		UniformSetId uniform_set_0;
-		UniformSetId uniform_set_1;
+		UniformSetId draw_uniform_set_0;
+		UniformSetId shadow_gen_uniform_set_1;
 	};
 
-	ShaderId m_mesh_shader;
-	PipelineId m_mesh_pipeline;
+	struct MeshCommon {
+		ShaderId shader;
+		PipelineId pipeline;
+		SamplerId texture_sampler;
+		SamplerId shadow_map_sampler;
+		UniformSetId draw_uniform_set_1;
+	};
+
+	MeshCommon m_mesh_common;
 	std::vector<Mesh> m_meshes;
+
+	void create_mesh_uniform_set_1();
+
+	// Draw list
+	struct DrawList {
+		std::vector<MeshId> meshes;
+		std::optional<SkyboxId> skybox;
+
+		void clear() {
+			meshes.clear();
+			skybox.reset();
+		}
+	};
+
+	DrawList m_draw_list;
 };

@@ -1,6 +1,5 @@
 #include "Application.h"
 
-#include <Renderer/VulkanContext.h>
 #include <stb_image/stb_image.h>
 #include <tiny_obj_loader/tiny_obj_loader.h>
 
@@ -55,6 +54,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_renderer.create(m_window.context());
 	m_renderer.set_resolution(1280, 720);
+	//uint32_t shadow_map_resolution = 2048;
+	//m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
 
 	m_prev_mouse_x = props.width / 2;
 	m_prev_mouse_y = props.height / 2;
@@ -68,6 +69,15 @@ Application::Application(const ApplicationProperties& props) {
 	m_camera.far = 1'000'000.0f;
 
 	create_viking_room();
+
+	glm::vec3 light_pos{ 5.0f, 5.0f, 5.0f };
+	m_directional_light = {
+		.eye = light_pos,
+		.front = glm::vec3(0.0f) - light_pos,
+		.up = glm::vec3(0.0f, 0.0f, -1.0f)
+	};
+
+	m_renderer.set_directional_light(m_directional_light);
 
 	int width = 0, height = 0;
 	std::vector<uint8_t> skybox_pixels = load_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
@@ -133,7 +143,9 @@ void Application::create_viking_room() {
 
 	m_viking_room_mesh = m_renderer.mesh_create(vertices, indices, texture_spec);
 	
-	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 2.0f, 0.0f));
+	m_viking_room_pos = glm::vec3(2.0f, 2.0f, 0.0f);
+
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), m_viking_room_pos);
 	m_renderer.mesh_update_model_matrix(m_viking_room_mesh, model);
 }
 

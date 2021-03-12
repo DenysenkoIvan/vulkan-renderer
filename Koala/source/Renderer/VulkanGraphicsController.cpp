@@ -6,6 +6,19 @@
 #include <utility>
 #include <stdexcept>
 
+static std::vector<char> const_char_to_vector(const char* data) {
+	size_t size = strlen(data);
+	
+	std::vector<char> v;
+	v.reserve(size + 1);
+
+	for (size_t i = 0; i < size; i++)
+		v.push_back(data[i]);
+	v.push_back(0);
+
+	return v;
+}
+
 static uint32_t vk_format_to_size(VkFormat format) {
 	switch (format) {
 	case VK_FORMAT_R8G8B8A8_SRGB:		return 4 * 1;
@@ -148,36 +161,6 @@ static VkPipelineStageFlags image_usage_to_pipeline_stage(ImageUsageFlags usage)
 	return stages;
 }
 
-/*static VkAccessFlags get_access_flags(VkImageLayout layout) {
-	switch (layout) {
-	case VK_IMAGE_LAYOUT_UNDEFINED:
-		return 0;
-	case VK_IMAGE_LAYOUT_GENERAL:
-		return
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
-			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
-			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_WRITE_BIT |
-			VK_ACCESS_HOST_READ_BIT;
-	//case VK_IMAGE_LAYOUT_PREINITIALIZED:
-	//	return VK_ACCESS_HOST_WRITE_BIT;
-	case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-		return
-			VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-	case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-		return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
-	case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-		return VK_ACCESS_TRANSFER_READ_BIT;
-	case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-		return VK_ACCESS_TRANSFER_WRITE_BIT;
-	case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
-		return 0;
-	}
-
-	throw std::runtime_error("Image layout not supported");
-}*/
-
 static VkPipelineStageFlags get_pipeline_stage_flags(VkImageLayout layout) {
 	switch (layout) {
 	case VK_IMAGE_LAYOUT_UNDEFINED:
@@ -274,13 +257,14 @@ void VulkanGraphicsController::destroy() {
 		vkDestroySampler(device, sampler.sampler, nullptr);
 
 	for (Shader& shader : m_shaders) {
-		ShaderInfo& info = *shader.info;
-
-		for (VkDescriptorSetLayout set_layout : info.set_layouts)
+		for (VkDescriptorSetLayout set_layout : shader.set_layouts)
 			vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
 
-		vkDestroyShaderModule(device, info.vertex_module, nullptr);
-		vkDestroyShaderModule(device, info.fragment_module, nullptr);
+		for (StageInfo& stage_info : shader.stages)
+			vkDestroyShaderModule(device, stage_info.module, nullptr);
+
+		//vkDestroyShaderModule(device, info.vertex_module, nullptr);
+		//vkDestroyShaderModule(device, info.fragment_module, nullptr);
 
 		vkDestroyPipelineLayout(device, shader.pipeline_layout, nullptr);
 	}
@@ -307,12 +291,6 @@ void VulkanGraphicsController::destroy() {
 	for (RenderPass& render_pass : m_render_passes)
 		vkDestroyRenderPass(device, render_pass.render_pass, nullptr);
 	m_render_passes.clear();
-}
-
-void VulkanGraphicsController::resize(uint32_t width, uint32_t height) {
-	
-	//m_context->resize(width, height);
-
 }
 
 void VulkanGraphicsController::end_frame() {
@@ -426,7 +404,7 @@ void VulkanGraphicsController::draw_bind_index_buffer(BufferId buffer_id, IndexT
 	vkCmdBindIndexBuffer(m_frames[m_frame_index].draw_buffer, buffer.buffer, 0, (VkIndexType)index_type);
 }
 
-void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, UniformSetId* set_ids, uint32_t count) {
+void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, uint32_t first_set, const UniformSetId* set_ids, uint32_t count) {
 	std::vector<VkDescriptorSet> descriptor_sets;
 	descriptor_sets.reserve(count);
 	
@@ -443,7 +421,7 @@ void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, Un
 		m_frames[m_frame_index].draw_buffer,
 		VK_PIPELINE_BIND_POINT_GRAPHICS,
 		m_pipelines[pipeline_id].layout,
-		0, count, descriptor_sets.data(),
+		first_set, count, descriptor_sets.data(),
 		0, nullptr
 	);
 }
@@ -711,30 +689,46 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 	return (FramebufferId)m_framebuffers.size() - 1;
 }
 
-ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& vertex_spv, const std::vector<uint8_t>& fragment_spv) {
+ShaderId VulkanGraphicsController::shader_create(const void* vert_spv, uint32_t vert_size, const void* frag_spv, uint32_t frag_size) {
 	m_shaders.push_back({});
 	Shader& shader = m_shaders.back();
-	shader.info = std::make_unique<ShaderInfo>();
+	
+	auto reflect_shader_stage = [&, this](uint32_t size, const void* spv) {
+		spv_reflect::ShaderModule shader_module(size, spv);
 
-	auto reflect_shader_stage = [this, &shader](const std::vector<uint8_t>& spv) {
-		spv_reflect::ShaderModule shader_module(spv);
+		shader.stages.push_back({
+			.entry = const_char_to_vector(shader_module.GetEntryPointName())
+		});
+		StageInfo& stage_info = shader.stages.back();
 
-		VkShaderStageFlags shader_stage = (VkShaderStageFlags)shader_module.GetShaderStage();
+		VkShaderModuleCreateInfo module_info({
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = (uint32_t)size,
+			.pCode = (uint32_t*)spv
+		});
+
+		if (vkCreateShaderModule(m_context->device(), &module_info, nullptr, &stage_info.module) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create Vertex stage VkShaderModule");
+
+		shader.stage_create_infos.push_back({
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = (VkShaderStageFlagBits)shader_module.GetShaderStage(),
+			.module = stage_info.module,
+			.pName = stage_info.entry.data()
+		});
+		VkPipelineShaderStageCreateInfo& stage_create_info = shader.stage_create_infos.back();
 
 		// Reflect Input Variables
-		if (shader_stage == VK_SHADER_STAGE_VERTEX_BIT) {
-			// Save vertex entry name
-			shader.info->vertex_entry = shader_module.GetEntryPointName();
-
+		if (stage_create_info.stage == VK_SHADER_STAGE_VERTEX_BIT) {
 			uint32_t input_var_count = 0;
 			shader_module.EnumerateInputVariables(&input_var_count, nullptr);
 			std::vector<SpvReflectInterfaceVariable*> input_vars(input_var_count);
 			shader_module.EnumerateInputVariables(&input_var_count, input_vars.data());
 
-			shader.info->attribute_descriptions.reserve(input_var_count);
+			shader.input_vars_info.attribute_descriptions.reserve(input_var_count);
 
 			uint32_t stride = 0;
-			for (uint32_t i = 0; i < input_var_count; i++) {	
+			for (uint32_t i = 0; i < input_var_count; i++) {
 				SpvReflectInterfaceVariable* input_var = input_vars[i];
 
 				VkVertexInputAttributeDescription attribute_description{
@@ -743,17 +737,14 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 					.format = (VkFormat)input_var->format,
 					.offset = stride
 				};
-				
+
 				stride += vk_format_to_size((VkFormat)input_var->format);
 
-				shader.info->attribute_descriptions.push_back(attribute_description);
+				shader.input_vars_info.attribute_descriptions.push_back(attribute_description);
 			}
 
-			shader.info->binding_description.binding = 0;
-			shader.info->binding_description.stride = stride;
-		} else {
-			// Save fragment entry name
-			shader.info->fragment_entry = shader_module.GetEntryPointName();
+			shader.input_vars_info.binding_description.binding = 0;
+			shader.input_vars_info.binding_description.stride = stride;
 		}
 
 		// Relfect Uniforms
@@ -768,28 +759,28 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 			VkDescriptorType type = (VkDescriptorType)descriptor_binding->descriptor_type;
 			uint32_t count = descriptor_binding->count;
 
-			auto set_it = shader.info->find_set(set_idx);
-			if (set_it == shader.info->sets.end()) {
-				Set set;
-				set.set = set_idx;
-				shader.info->sets.push_back(set);
-				set_it = shader.info->sets.end() - 1;
+			auto set_it = shader.find_set(set_idx);
+			if (set_it == shader.sets.end()) {
+				SetInfo set_info{
+					.set = set_idx
+				};
+
+				shader.sets.push_back(set_info);
+				set_it = shader.sets.end() - 1;
 			}
 
 			auto binding_it = set_it->find_binding(binding_idx);
-			// Insert new binding, no problem
-			if (binding_it == set_it->bindings.end()) {
+			if (binding_it == set_it->bindings.end()) { // Insert new binding, no problem
 				VkDescriptorSetLayoutBinding layout_binding{
 					.binding = binding_idx,
 					.descriptorType = type,
 					.descriptorCount = count,
-					.stageFlags = shader_stage
+					.stageFlags = (VkShaderStageFlags)stage_create_info.stage
 				};
 				
-				set_it->bindings.emplace_back(layout_binding);
-			// Update binding stage and verify bindings are the same
-			} else {
-				binding_it->stageFlags |= shader_stage;
+				set_it->bindings.push_back(layout_binding);
+			} else { // Update binding stage and verify bindings are the same
+				binding_it->stageFlags |= (VkShaderStageFlags)stage_create_info.stage;
 
 				if (type != binding_it->descriptorType)
 					throw std::runtime_error("Uniform set binding redefinition with different descriptor type");
@@ -799,81 +790,50 @@ ShaderId VulkanGraphicsController::shader_create(const std::vector<uint8_t>& ver
 		}
 	};
 
-	reflect_shader_stage(vertex_spv);
-	reflect_shader_stage(fragment_spv);
+	reflect_shader_stage(vert_size, vert_spv);
+	if (frag_spv)
+		reflect_shader_stage(frag_size, frag_spv);
 
-	// Create Vertex stage VkShaderModule
-	VkShaderModuleCreateInfo vert_module_info{
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = (uint32_t)vertex_spv.size(),
-		.pCode = (uint32_t*)vertex_spv.data()
-	};
-	
-	if (vkCreateShaderModule(m_context->device(), &vert_module_info, nullptr, &shader.info->vertex_module) != VK_SUCCESS)
-		throw std::runtime_error("Failed to create Vertex stage VkShaderModule");
-
-	// Create Fragment stage VkShaderModule
-	VkShaderModuleCreateInfo frag_module_info{
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = (uint32_t)fragment_spv.size(),
-		.pCode = (uint32_t*)fragment_spv.data()
-	};
-
-	if (vkCreateShaderModule(m_context->device(), &frag_module_info, nullptr, &shader.info->fragment_module) != VK_SUCCESS)
-		throw std::runtime_error("Failed to create Vertex stage VkShaderModule");
-
-	// Create Vertex stage VkPipelineShaderStageCreateInfo
-	shader.stage_create_infos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shader.stage_create_infos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-	shader.stage_create_infos[0].module = shader.info->vertex_module;
-	shader.stage_create_infos[0].pName = shader.info->vertex_entry.c_str();
-
-	// Create Fragment stage VkPipelineShaderStageCreateInfo
-	shader.stage_create_infos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shader.stage_create_infos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-	shader.stage_create_infos[1].module = shader.info->fragment_module;
-	shader.stage_create_infos[1].pName = shader.info->fragment_entry.c_str();
+	std::sort(shader.sets.begin(), shader.sets.end(), [](const auto& set_0, const auto& set_1) {
+		return set_0.set < set_1.set;
+	});
 
 	// Create VkPipelineVertexInputStateCreateInfo
 	shader.vertex_input_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	shader.vertex_input_create_info.vertexBindingDescriptionCount = 1;
-	shader.vertex_input_create_info.pVertexBindingDescriptions = &shader.info->binding_description;
-	shader.vertex_input_create_info.vertexAttributeDescriptionCount = (uint32_t)shader.info->attribute_descriptions.size();
-	shader.vertex_input_create_info.pVertexAttributeDescriptions = shader.info->attribute_descriptions.data();
-
-	std::sort(shader.info->sets.begin(), shader.info->sets.end(), [](const auto& s0, const auto& s1) {
-		return s0.set < s1.set;
-	});
+	shader.vertex_input_create_info.pVertexBindingDescriptions = &shader.input_vars_info.binding_description;
+	shader.vertex_input_create_info.vertexAttributeDescriptionCount = (uint32_t)shader.input_vars_info.attribute_descriptions.size();
+	shader.vertex_input_create_info.pVertexAttributeDescriptions = shader.input_vars_info.attribute_descriptions.data();
 
 	// Create VkDescriptorSetLayouts
-	size_t set_count = shader.info->sets.size();
+	size_t set_count = shader.sets.size();
 
-	shader.info->set_layouts.reserve(set_count);
+	shader.set_layouts.reserve(set_count);
 	for (size_t i = 0; i < set_count; i++) {
-		Set& set = shader.info->sets[i];
+		SetInfo& set_info = shader.sets[i];
 
-		std::sort(set.bindings.begin(), set.bindings.end(), [](const auto& b0, const auto& b1) {
-			return b0.binding < b1.binding;
+		std::sort(set_info.bindings.begin(), set_info.bindings.end(), [](const auto& bind_0, const auto& bind_1) {
+			return bind_0.binding < bind_1.binding;
 		});
 
 		VkDescriptorSetLayoutCreateInfo set_layout_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.bindingCount = (uint32_t)set.bindings.size(),
-			.pBindings = set.bindings.data()
+			.bindingCount = (uint32_t)set_info.bindings.size(),
+			.pBindings = set_info.bindings.data()
 		};
 	
 		VkDescriptorSetLayout set_layout;
 		if (vkCreateDescriptorSetLayout(m_context->device(), &set_layout_info, nullptr, &set_layout) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create descritptor set layout");
 
-		shader.info->set_layouts.push_back(set_layout);
+		shader.set_layouts.push_back(set_layout);
 	}
 
 	// Create pipeline layout
 	VkPipelineLayoutCreateInfo pipeline_layout_info{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = (uint32_t)shader.info->set_layouts.size(),
-		.pSetLayouts = shader.info->set_layouts.data()
+		.setLayoutCount = (uint32_t)shader.set_layouts.size(),
+		.pSetLayouts = shader.set_layouts.data()
 	};
 
 	if (vkCreatePipelineLayout(m_context->device(), &pipeline_layout_info, nullptr, &shader.pipeline_layout) != VK_SUCCESS)
@@ -943,7 +903,6 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
 		.depthWriteEnable = VK_TRUE,
-		//.depthCompareOp = VK_COMPARE_OP_LESS,
 		.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
 		.depthBoundsTestEnable = VK_FALSE,
 		.stencilTestEnable = VK_FALSE
@@ -1148,7 +1107,7 @@ SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
 }
 
 UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const Uniform* uniforms, uint32_t uniform_count) {
-	Set& set = *m_shaders[shader_id].info->find_set(set_idx);
+	SetInfo& set = *m_shaders[shader_id].find_set(set_idx);
 
 	std::vector<ImageId> images;
 
@@ -1249,7 +1208,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		}
 		}
 
-		pool_key.uniform_type_counts[(uint32_t)uniform.type] = write.descriptorCount;
+		pool_key.uniform_type_counts[(uint32_t)uniform.type] += write.descriptorCount;
 
 		writes.push_back(write);
 	}
@@ -1261,7 +1220,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = pool.pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts = &m_shaders[shader_id].info->set_layouts[set_idx]
+		.pSetLayouts = &m_shaders[shader_id].set_layouts[set_idx]
 	};
 	
 	VkDescriptorSet descriptor_set;
@@ -1282,12 +1241,8 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 	vkUpdateDescriptorSets(m_context->device(), (uint32_t)writes.size(), writes.data(), 0, nullptr);
 
 	m_uniform_sets.push_back(std::move(uniform_set));
-
 	return (UniformSetId)m_uniform_sets.size() - 1;
 }
-
-
-
 
 VkBuffer VulkanGraphicsController::buffer_create(VkBufferUsageFlags usage, VkDeviceSize size) {
 	VkBuffer buffer;
