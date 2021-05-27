@@ -401,7 +401,7 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 }
 
 void Application::draw_node(const Node& node, const Model& model, const glm::mat4& matrix) {
-	glm::mat4 new_matrix = node.local_matrix() * matrix;
+	glm::mat4 new_matrix = matrix * node.local_matrix();
 
 	for (const Primitive& primitive : node.primitives) {
 		m_renderer.draw_primitive(
@@ -433,7 +433,7 @@ Application::Application(const ApplicationProperties& props) {
 	m_renderer.create(m_window.context());
 
 	uint32_t resolution_coef = 1;
-	m_renderer.set_resolution(resolution_coef * 1280, resolution_coef * 720);
+	m_renderer.set_resolution(resolution_coef * 1920, resolution_coef * 1080);
 	
 	//uint32_t shadow_map_resolution = 2048 * 4;
 	//m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
@@ -451,23 +451,23 @@ Application::Application(const ApplicationProperties& props) {
 
 	glm::vec3 light_pos{ 5.0f, 15.0f, 5.0f };
 	m_directional_light = {
-		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(15.0f),
+		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(8.0f),
 		.pos = light_pos,
 		.dir = glm::normalize(light_pos)
 	};
 
-	m_model = load_gltf_model("../assets/models/mando_helmet/scene.gltf");
+	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
 
 	int width = 0, height = 0;
 	std::vector<uint8_t> skybox_pixels = load_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
-
+	
 	ImageSpecs skybox_texture{
 		.width = (uint32_t)width,
 		.height = (uint32_t)height,
 		.data = skybox_pixels.data()
 	};
 
-	//m_skybox = m_renderer.skybox_create(skybox_texture);
+	m_skybox = m_renderer.skybox_create(skybox_texture);
 }
 
 Application::~Application() {
@@ -519,7 +519,7 @@ void Application::on_update() {
 
 	float delta_time = time - m_previous_time_step;
 
-	float speed = delta_time * 30.0f;
+	float speed = delta_time * 10.0f;
 	if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_W) == GLFW_PRESS)
 		m_camera.move_forward(speed);
 	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_S) == GLFW_PRESS)
@@ -550,7 +550,7 @@ void Application::on_render() {
 	for (const auto& node : m_model.nodes)
 		draw_node(*node, m_model, glm::mat4(1.0f));
 
-	//m_renderer.draw_skybox(m_skybox);
+	m_renderer.draw_skybox(m_skybox);
 
 	m_renderer.end_frame(m_window.width(), m_window.height());
 }

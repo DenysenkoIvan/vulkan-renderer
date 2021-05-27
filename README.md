@@ -1,3 +1,3 @@
 # Koala Vulkan Renderer
 
-Vulkan Renderer (named Koala) in context of game engine (kinda).
+Vulkan Physically Based Deferred Renderer (named Koala) in context of game engine (kinda).

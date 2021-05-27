@@ -567,6 +567,18 @@ void Renderer::create(VulkanContext* context) {
 		present_pipeline_info.color_blend.attachment_count = (uint32_t)present_attachments.size();
 		present_pipeline_info.color_blend.attachments = present_attachments.data();
 
+		SamplerInfo sampler_info{
+			.mag_filter = Filter::Linear,
+			.min_filter = Filter::Linear
+		};
+
+		m_present_pipeline.diff_res_sampler = m_graphics_controller.sampler_create(sampler_info);
+
+		sampler_info.mag_filter = Filter::Nearest;
+		sampler_info.min_filter = Filter::Nearest;
+
+		m_present_pipeline.same_res_sampler = m_graphics_controller.sampler_create(sampler_info);
+
 		m_present_pipeline.pipeline = m_graphics_controller.pipeline_create(present_pipeline_info);
 	}
 
@@ -1096,7 +1108,7 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 			.address_mode_u = wrap_to_sampler_address_mode(samplers[i].wrap_u),
 			.address_mode_v = wrap_to_sampler_address_mode(samplers[i].wrap_v),
 			.anisotropy_enable = true,
-			.max_anisotropy = 4.0f
+			.max_anisotropy = 16.0f
 		};
 
 		SamplerId id = m_graphics_controller.sampler_create(info);
