@@ -9,19 +9,25 @@
 
 #include <glm/glm.hpp>
 
-using RenderId = uint32_t;
-using RenderPassId = uint32_t;
-using FramebufferId = uint32_t;
-using ImageId = uint32_t;
-using BufferId = uint32_t;
-using ShaderId = uint32_t;
-using PipelineId = uint32_t;
-using SamplerId = uint32_t;
-using UniformSetId = uint32_t;
+using RenderId = size_t;
+using RenderPassId = RenderId;
+using FramebufferId = RenderId;
+using ImageId = RenderId;
+using BufferId = RenderId;
+using ShaderId = RenderId;
+using PipelineId = RenderId;
+using SamplerId = RenderId;
+using UniformSetId = RenderId;
 
-enum class Format {
+enum class Format : uint32_t {
 	Undefined = 0,
+	RGBA8_UNorm = 37,
+	RGBA8_SNorm = 38,
 	RGBA8_SRGB = 43,
+	BGRA8_UNorm = 44,
+	//BGRA8_SNorm = 45,
+	RGBA16_UNorm = 90,
+	RGBA16_SFloat = 97,
 	R32_UInt = 98,
 	R32_SInt = 99,
 	R32_SFloat = 100,
@@ -40,12 +46,18 @@ enum class Format {
 };
 
 enum ImageUsageFlagBits {
+	ImageUsageNone = 0,
 	ImageUsageTransferSrc = 1,
 	ImageUsageTransferDst = 2,
-	ImageUsageSampled = 4,
-	ImageUsageColorAttachment = 16,
-	ImageUsageDepthStencilAttachment = 32,
-	ImageUsageCPUVisible = 1048576
+	//ImageUsageSampled = 4,
+	ImageUsageColorSampled = 0x100000,
+	ImageUsageDepthSampled = 0x200000,
+	//ImageUsageStencliSampled = 0x400000,
+	ImageUsageColorAttachment = 0x10,
+	ImageUsageDepthStencilAttachment = 0x20
+	//ImageUsageDepthStencilAttachmentReadOnly = 0x4000
+	//ImageUsageInputAttachment = 128,
+	//ImageUsageCPUVisible = 1048576
 };
 using ImageUsageFlags = uint32_t;
 
@@ -55,6 +67,44 @@ enum class ImageViewType {
 	ThreeD = 2,
 	Cube = 3
 };
+
+enum class CompareOp : uint32_t {
+	Never = 0,
+	Less = 1,
+	Equal = 2,
+	LessOrEqual = 3,
+	Greater = 4,
+	NotEqual = 5,
+	GreaterOrEqual = 6,
+	Always = 7
+};
+
+enum class LogicOp : uint32_t {
+	Clear = 0,
+	And = 1,
+	AndReverse = 2,
+	Copy = 3,
+	AndInverted = 4,
+	NoOp = 5,
+	Xor = 6,
+	Or = 7,
+	Nor = 8,
+	Equivalent = 9,
+	Invert = 10,
+	OrReverse = 11,
+	CopyInverted = 12,
+	OrInverted = 13,
+	Nand = 14,
+	Set = 15
+};
+
+enum ColorComponentFlagBits {
+	ColorComponentR = 1,
+	ColorComponentG = 2,
+	ColorComponentB = 4,
+	ColorComponentA = 8
+};
+using ColorComponentFlags = uint32_t;
 
 enum class InitialAction {
 	Load = 0,
@@ -68,10 +118,14 @@ enum class FinalAction {
 };
 
 struct RenderPassAttachment {
-	ImageUsageFlags usage;
+	ImageUsageFlags previous_usage;
+	ImageUsageFlags current_usage;
+	ImageUsageFlags next_usage;
 	Format format = Format::Undefined;
 	InitialAction initial_action;
 	FinalAction final_action;
+	InitialAction stencil_initial_action;
+	FinalAction stencil_final_action;
 };
 
 enum class PrimitiveTopology : uint32_t {
@@ -116,12 +170,15 @@ struct Rasterization {
 	float line_width = 1.0f;
 };
 
-enum PipelineDynamicState {
+enum PipelineDynamicStateBits {
 	DYNAMIC_STATE_VIEWPORT = 0,
 	DYNAMIC_STATE_SCISSOR = 1,
 	DYNAMIC_STATE_LINE_WIDTH = 2,
 	DYNAMIC_STATE_DEPTH_BIAS = 3,
-	DYNAMIC_STATE_DEPTH_BOUNDS = 5
+	DYNAMIC_STATE_DEPTH_BOUNDS = 5,
+	DYNAMIC_STATE_STENCIL_COMPARE_MASK = 6,
+	DYNAMIC_STATE_STENCIL_WRITE_MASK = 7,
+	DYNAMIC_STATE_STENCIL_REFERENCE = 8,
 };
 using PipelineDynamicStateFlags = uint32_t;
 
@@ -130,10 +187,100 @@ struct DynamicStates {
 	uint32_t dynamic_state_count = 0;
 };
 
+enum class StencilOp : uint32_t {
+	Keep = 0,
+	Zero = 1,
+	Replace = 2,
+	IncrementAndClamp = 3,
+	DecrementAndClamp = 4,
+	Invert = 5,
+	IncrementAndWrap = 6,
+	DecrementAndWrap = 7
+};
+
+enum class StencilFaces : uint32_t {
+	Front = 1,
+	Back = 2,
+	FrontAndBack = 3
+};
+
+struct StencilOpState {
+	StencilOp fail_op = StencilOp::Keep;
+	StencilOp pass_op = StencilOp::Replace;
+	StencilOp depth_fail_op = StencilOp::Keep;
+	CompareOp compare_op = CompareOp::Always;
+	uint32_t compare_mask = 0xFF;
+	uint32_t write_mask = 0xFF;
+	uint32_t reference = 111; // Garbage value
+};
+
+struct DepthStencilState {
+	bool depth_test_enable = true;
+	bool depth_write_enable = true;
+	CompareOp depth_compare_op = CompareOp::LessOrEqual;
+	bool depth_bounds_test_enable = false;
+	bool stencil_test_enable = false;
+	StencilOpState front;
+	StencilOpState back;
+	float min_depth_bounds = 0.0f;
+	float max_depth_bounds = 1.0f;
+};
+
+enum class BlendFactor : uint32_t {
+	Zero = 0,
+	One = 1,
+	SrcColor = 2,
+	OneMinusSrcColor = 3,
+	DstColor = 4,
+	OneMinusDstColor = 5,
+	SrcAlpha = 6,
+	OneMinusSrcAlpha = 7,
+	DstAlpha = 8,
+	OneMinusDstAlpha = 9,
+	ConstantColor = 10,
+	OneMinusConstantColor = 11,
+	ConstantAlpha = 12,
+	OneMinusConstantAlpha = 13,
+	SrcAlphaSaturate = 14,
+	Src1Color = 15,
+	OneMinusSrc1Color = 16,
+	Src1Alpha = 17,
+	OneMinusSrc1Alpha = 18
+};
+
+enum class BlendOp : uint32_t {
+	Add = 0,
+	Substract = 1,
+	ReverseSubstract = 2,
+	Min = 3,
+	Max = 4
+};
+
+struct ColorBlendAttachmentState {
+	bool blend_enable;
+	BlendFactor src_color_blend_factor;
+	BlendFactor dst_color_blend_factor;
+	BlendOp color_blend_op;
+	BlendFactor src_alpha_blend_factor;
+	BlendFactor dst_alpha_blend_factor;
+	BlendOp alpha_blend_op;
+	ColorComponentFlags color_write_mask;
+};
+
+struct ColorBlendState {
+	bool logic_op_enable;
+	LogicOp logic_op;
+	uint32_t attachment_count;
+	ColorBlendAttachmentState* attachments;
+	float blend_constants[4];
+};
+
 struct PipelineInfo {
 	ShaderId shader_id;
 	PipelineAssembly assembly;
 	Rasterization raster;
+	DepthStencilState depth_stencil;
+	ColorBlendState color_blend;
 	DynamicStates dynamic_states;
 	std::optional<RenderPassId> render_pass_id;
 };
@@ -153,6 +300,19 @@ enum class IndexType : uint32_t {
 	Uint32 = 1
 };
 
+enum class BufferType : uint32_t {
+	Vertex,
+	Index,
+	Uniform
+};
+
+struct BufferInfo {
+	BufferType type;
+	size_t offset;
+	size_t size;
+	IndexType index_type;
+};
+
 enum class UniformType : uint32_t {
 	Sampler = 0,
 	CombinedImageSampler = 1,
@@ -160,8 +320,9 @@ enum class UniformType : uint32_t {
 	UniformBuffer = 6
 };
 
-struct Uniform {
+struct UniformInfo {
 	UniformType type;
+	ImageUsageFlags image_usage; // In case uniform is texture
 	uint32_t binding;
 	const RenderId* ids;
 	uint32_t id_count;
@@ -182,17 +343,6 @@ enum class SamplerAddressMode : uint32_t {
 	MirroredRepeat = 1,
 	ClampToEdge = 2,
 	ClampToBorder = 3
-};
-
-enum class CompareOp {
-	Never = 0,
-	Less = 1,
-	Equal = 2,
-	LessOrEqual = 3,
-	Greater = 4,
-	NotEqual = 5,
-	GreaterOrEqual = 6,
-	Always = 7
 };
 
 enum class BorderColor : uint32_t {
@@ -222,6 +372,31 @@ struct SamplerInfo {
 	bool unnormalized_coordinates = false;
 };
 
+typedef union ClearValue {
+	glm::vec4 color;
+	struct {
+		float depth;
+		uint32_t stencil;
+	} depth_stencil;
+} ClearValue;
+
+enum ShaderStageBits {
+	ShaderStageVertex = 1,
+	ShaderStageFragment = 16
+};
+using ShaderStageFlags = uint32_t;
+
+struct ShaderStage {
+	ShaderStageFlags stage;
+	const void* spv;
+	size_t spv_size;
+};
+
+struct ScreenResolution {
+	uint32_t width;
+	uint32_t height;
+};
+
 class VulkanGraphicsController {
 public:
 	void create(VulkanContext* context);
@@ -229,7 +404,7 @@ public:
 
 	void end_frame();
 	
-	void draw_begin(FramebufferId framebuffer_id, const glm::vec4* clear_colors, uint32_t count);
+	void draw_begin(FramebufferId framebuffer_id, const ClearValue* clear_values, uint32_t count);
 	void draw_end();
 
 	void draw_begin_for_screen(const glm::vec4& clear_color);
@@ -237,18 +412,24 @@ public:
 
 	void draw_set_viewport(float x, float y, float width, float height, float min_depth, float max_depth);
 	void draw_set_scissor(int x_offset, int y_offset, uint32_t width, uint32_t height);
+	void draw_set_line_width(float width);
+	void draw_set_stencil_reference(StencilFaces faces, uint32_t reference);
+
+	void draw_push_constants(ShaderId shader, ShaderStageFlags stage, uint32_t offset, uint32_t size, const void* data);
 
 	void draw_bind_pipeline(PipelineId pipeline_id);
 	void draw_bind_vertex_buffer(BufferId buffer_id);
 	void draw_bind_index_buffer(BufferId buffer_id, IndexType index_type);
 	void draw_bind_uniform_sets(PipelineId pipeline_id, uint32_t first_set, const UniformSetId* set_ids, uint32_t count);
-	void draw_draw_indexed(uint32_t index_count);
 
-	RenderPassId render_pass_create(const RenderPassAttachment* attachments, uint32_t count);
+	void draw_draw_indexed(uint32_t index_count, uint32_t first_index);
+	void draw_draw(uint32_t vertex_count, uint32_t first_vertex);
+
+	RenderPassId render_pass_create(const RenderPassAttachment* attachments, RenderId count);
 
 	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
 
-	ShaderId shader_create(const void* vertex_spv, uint32_t vert_size, const void* fragment_spv, uint32_t frag_size);
+	ShaderId shader_create(const ShaderStage* stages, RenderId stage_count);
 	
 	PipelineId pipeline_create(const PipelineInfo& pipeline_info);
 	
@@ -263,7 +444,9 @@ public:
 
 	SamplerId sampler_create(const SamplerInfo& info);
 
-	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const Uniform* uniforms, uint32_t uniform_count);
+	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const UniformInfo* uniforms, size_t uniform_count);
+
+	ScreenResolution screen_resolution() const;
 
 private:
 	struct RenderPassAttachmentInfo {
@@ -281,6 +464,7 @@ private:
 
 	struct Framebuffer {
 		std::vector<ImageId> attachments;
+		std::vector<VkImageView> image_views;
 		RenderPassId render_pass_id;
 		VkRenderPass render_pass;
 		VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -318,6 +502,7 @@ private:
 
 		std::vector<VkDescriptorSetLayout> set_layouts;
 		std::vector<VkPipelineShaderStageCreateInfo> stage_create_infos;
+		std::vector<VkPushConstantRange> push_constants;
 		VkPipelineVertexInputStateCreateInfo vertex_input_create_info;
 		VkPipelineLayout pipeline_layout;
 
@@ -371,19 +556,17 @@ private:
 		ImageInfo info;
 		VkImage image;
 		VkDeviceMemory memory;
-		VkImageView view;
 		VkImageLayout current_layout;
-		VkImageAspectFlags aspect;
+		VkImageAspectFlags full_aspect;
 	};
 
 	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
-	VkImageView vulkan_image_view_create(VkImage image, VkImageViewType view_type, VkFormat format, VkImageAspectFlags aspect, uint32_t layer_count);
+	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
 	void vulkan_image_copy(VkImage image, VkFormat format, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count, const void* data, size_t size);
 	void image_should_have_layout(Image& image, VkImageLayout layout);
-	void image_layout_transition(Image& image, VkImageLayout new_layout);
 	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
-
+	
 	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);
 
 	// Sampler
@@ -418,6 +601,7 @@ private:
 	// Uniform Set
 	struct UniformSet {
 		std::vector<ImageId> images; // Used to check out if image is in proper layout before descriptor binding operation
+		std::vector<VkImageView> image_views;
 		DescriptorPoolKey pool_key;
 		uint32_t pool_idx;
 		ShaderId shader;

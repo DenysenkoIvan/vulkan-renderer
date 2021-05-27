@@ -337,6 +337,7 @@ void VulkanContext::create_device() {
 	uint32_t queue_count = (m_graphics_queue_index == m_present_queue_index ? 1 : 2);
 
 	VkPhysicalDeviceFeatures features{
+		.wideLines = VK_TRUE,
 		.samplerAnisotropy = VK_TRUE
 	};
 
