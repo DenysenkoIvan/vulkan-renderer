@@ -8,35 +8,29 @@
 #include <stdexcept>
 #include <vector>
 
-static std::vector<uint8_t> load_cube_map(std::string_view filename, int* x, int* y) {
+static std::vector<float> load_cube_map(std::string_view filename, int& width, int& height) {
 	int channels = -1;
-	int rows = -1;
-	int cols = -1;
-
-	stbi_uc* pixels = stbi_load(filename.data(), &rows, &cols, &channels, STBI_rgb_alpha);
+	float* pixels = stbi_loadf(filename.data(), &width, &height, &channels, STBI_rgb_alpha);
 
 	if (!pixels)
 		throw std::runtime_error("Failed to load image");
 
-	size_t map_size = rows * cols * channels;
+	size_t map_size = width * height * 4 * sizeof(float);
 
-	std::vector<uint8_t> storage;
+	std::vector<float> storage;
 	storage.reserve(map_size);
 
-	size_t offset = rows / 6 * 4;
-	for (int i = 0; i < 6; i++) {
-		for (int j = 0; j < cols; j++) {
-			for (int k = 0; k < offset; k++) {
-				size_t o = j * rows * 4 + i * offset + k;
+	size_t offset = width / 6 * 4;
+	for (int i = 0; i < 6; i++) { // For every face
+		for (int j = 0; j < height; j++) { // For every column from bottom to top
+			for (int k = 0; k < offset; k++) { // For every byte in rgba
+				size_t o = j * width * 4 + i * offset + k;
 				storage.push_back(pixels[o]);
 			}
 		}
 	}
 
 	stbi_image_free(pixels);
-
-	*x = rows;
-	*y = cols;
 
 	return storage;
 }
@@ -45,7 +39,7 @@ static std::unique_ptr<uint8_t[]> rgb_to_rgba(const uint8_t* data, size_t texel_
 	std::unique_ptr<uint8_t[]> image = std::make_unique<uint8_t[]>(texel_count * 4);
 
 	for (size_t i = 0; i < texel_count; i += 3) {
-		image[i] = data[i];
+		image[i]     = data[i];
 		image[i + 1] = data[i + 1];
 		image[i + 2] = data[i + 2];
 		image[i + 3] = 255;
@@ -256,14 +250,19 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 		ImageSpecs image{
 			.width = (uint32_t)gltf_image.width,
 			.height = (uint32_t)gltf_image.height,
-			.data = gltf_image.image.data()
+			.data = gltf_image.image.data(),
+			.data_format = Format::RGBA8_SRGB,
+			.desired_format = Format::RGBA8_SRGB
 		};
-	
+
+		if (gltf_image.component < 3)
+			throw std::runtime_error("Image component < 3");
+		
 		if (gltf_image.component == 3) {
 			raw_images.push_back(rgb_to_rgba(gltf_image.image.data(), image.width * image.height));
 			image.data = raw_images.back().get();
 		}
-
+		
 		images.push_back(image);
 	}
 
@@ -435,8 +434,8 @@ Application::Application(const ApplicationProperties& props) {
 	uint32_t resolution_coef = 1;
 	m_renderer.set_resolution(resolution_coef * 1920, resolution_coef * 1080);
 	
-	//uint32_t shadow_map_resolution = 2048 * 4;
-	//m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
+	uint32_t shadow_map_resolution = 2048 * 4;
+	m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
 
 	m_prev_mouse_x = props.width / 2;
 	m_prev_mouse_y = props.height / 2;
@@ -459,14 +458,16 @@ Application::Application(const ApplicationProperties& props) {
 	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
 
 	int width = 0, height = 0;
-	std::vector<uint8_t> skybox_pixels = load_cube_map("../assets/environment maps/lakeside.hdr", &width, &height);
+	std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);
 	
 	ImageSpecs skybox_texture{
 		.width = (uint32_t)width,
 		.height = (uint32_t)height,
-		.data = skybox_pixels.data()
+		.data = skybox_pixels.data(),
+		.data_format = Format::RGBA32_SFloat,
+		.desired_format = Format::RGBA16_SFloat
 	};
-
+	
 	m_skybox = m_renderer.skybox_create(skybox_texture);
 }
 
@@ -519,7 +520,7 @@ void Application::on_update() {
 
 	float delta_time = time - m_previous_time_step;
 
-	float speed = delta_time * 10.0f;
+	float speed = delta_time * 5.0f;
 	if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_W) == GLFW_PRESS)
 		m_camera.move_forward(speed);
 	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_S) == GLFW_PRESS)

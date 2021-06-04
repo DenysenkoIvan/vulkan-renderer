@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Common.h"
 #include "VulkanContext.h"
 #include "VulkanGraphicsController.h"
 
@@ -52,6 +53,8 @@ struct ImageSpecs {
 	uint32_t width;
 	uint32_t height;
 	const void* data;
+	Format data_format;
+	Format desired_format;
 };
 
 struct TextureSpecs {

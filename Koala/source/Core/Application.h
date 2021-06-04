@@ -39,22 +39,8 @@ struct Node {
 	Node(Node* parent) : parent(parent) {}
 
 	glm::mat4 local_matrix() const {
-		auto new_matrix = matrix;
-		new_matrix = glm::scale(glm::mat4(1.0f), scale) * new_matrix;
-		new_matrix = glm::toMat4(rotation) * new_matrix;
-		new_matrix = glm::translate(glm::mat4(1.0f), translation) * new_matrix;
 		return glm::translate(glm::mat4(1.0f), translation) * glm::toMat4(rotation) * glm::scale(glm::mat4(1.0f), scale) * matrix;
 	}
-
-	//glm::mat4 get_matrix() const {
-	//	glm::mat4 m = glm::mat4(1.0f);
-	//	const Node* p = parent;
-	//	while (p) {
-	//		m = p->local_matrix() * m;
-	//		p = p->parent;
-	//	}
-	//	return m;
-	//}
 };
 
 struct Model {

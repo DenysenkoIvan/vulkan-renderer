@@ -78,13 +78,15 @@ void Renderer::create(VulkanContext* context) {
 		ImageInfo empty_texture_info{
 			.usage = ImageUsageTransferDst | ImageUsageColorSampled,
 			.view_type = ImageViewType::TwoD,
-			.format = Format::BGRA8_UNorm,
+			.format = Format::RGBA8_UNorm,
 			.width = 1,
 			.height = 1,
 			.depth = 1,
 			.layer_count = 1
 		};
-		m_defaults.empty_texture.image = m_graphics_controller.image_create(zeroes, empty_texture_info);
+
+		m_defaults.empty_texture.image = m_graphics_controller.image_create(empty_texture_info);
+		m_graphics_controller.image_update(m_defaults.empty_texture.image, { empty_texture_info.format, zeroes });
 
 		SamplerInfo empty_texture_sampler_info{
 			.mag_filter = Filter::Nearest,
@@ -668,31 +670,31 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	// Albedo
 	m_deferred.albedo_info.width = width;
 	m_deferred.albedo_info.height = height;
-	m_deferred.albedo = m_graphics_controller.image_create(nullptr, m_deferred.albedo_info);
+	m_deferred.albedo = m_graphics_controller.image_create(m_deferred.albedo_info);
 
 	// Ao-rough-met
 	m_deferred.ao_rough_met_info.width = width;
 	m_deferred.ao_rough_met_info.height = height;
-	m_deferred.ao_rough_met = m_graphics_controller.image_create(nullptr, m_deferred.ao_rough_met_info);
+	m_deferred.ao_rough_met = m_graphics_controller.image_create(m_deferred.ao_rough_met_info);
 
 	// Normals
 	m_deferred.normals_info.width = width;
 	m_deferred.normals_info.height = height;
-	m_deferred.normals = m_graphics_controller.image_create(nullptr, m_deferred.normals_info);
+	m_deferred.normals = m_graphics_controller.image_create(m_deferred.normals_info);
 
 	m_deferred.emissive_info.width = width;
 	m_deferred.emissive_info.height = height;
-	m_deferred.emissive = m_graphics_controller.image_create(nullptr, m_deferred.emissive_info);
+	m_deferred.emissive = m_graphics_controller.image_create(m_deferred.emissive_info);
 
 	// Depth/stencil
 	m_deferred.depth_stencil_info.width = width;
 	m_deferred.depth_stencil_info.height = height;
-	m_deferred.depth_stencil = m_graphics_controller.image_create(nullptr, m_deferred.depth_stencil_info);
+	m_deferred.depth_stencil = m_graphics_controller.image_create(m_deferred.depth_stencil_info);
 
 	// Depth
 	m_deferred.depth_info.width = width;
 	m_deferred.depth_info.height = height;
-	m_deferred.depth = m_graphics_controller.image_create(nullptr, m_deferred.depth_info);
+	m_deferred.depth = m_graphics_controller.image_create(m_deferred.depth_info);
 
 	RenderId depth_copy_ids[2] = { m_deferred.depth_stencil, m_depth_copy_pipeline.sampler };
 
@@ -721,7 +723,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	// Composition
 	m_deferred.composition_info.width = width;
 	m_deferred.composition_info.height = height;
-	m_deferred.composition = m_graphics_controller.image_create(nullptr, m_deferred.composition_info);
+	m_deferred.composition = m_graphics_controller.image_create(m_deferred.composition_info);
 
 	//std::array<ImageId, 1> ss_shadows_fb_ids = { m_deferred.ss_shadows };
 	//m_deferred.ss_shadows_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.ss_shadows_pass, ss_shadows_fb_ids.data(), (uint32_t)ss_shadows_fb_ids.size());
@@ -1093,7 +1095,9 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 			.height = images[i].height
 		};
 
-		ImageId id = m_graphics_controller.image_create(images[i].data, info);
+		ImageId id = m_graphics_controller.image_create(info);
+		m_graphics_controller.image_update(id, { info.format, images[i].data });
+
 		image_ids.push_back(id);
 	}
 
@@ -1208,18 +1212,17 @@ SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
 	ImageInfo skybox_texture_info = {
 		.usage = ImageUsageColorSampled | ImageUsageTransferDst,
 		.view_type = ImageViewType::Cube,
-		.format = Format::RGBA8_SRGB,
+		.format = texture.desired_format,
 		.width = (uint32_t)texture.height,
 		.height = (uint32_t)texture.width / 6,
 		.depth = 1,
 		.layer_count = 6
 	};
 
-	Skybox skybox{
-		.image = m_graphics_controller.image_create(texture.data, skybox_texture_info)
-	};
+	ImageId id = m_graphics_controller.image_create(skybox_texture_info);
+	m_graphics_controller.image_update(id, { texture.data_format,  texture.data });
 
-	RenderId texture_ids[2] = { skybox.image, m_skybox_pipeline.sampler };
+	RenderId texture_ids[2] = { id, m_skybox_pipeline.sampler };
 
 	UniformInfo skybox_texture_uniform{
 		.type = UniformType::CombinedImageSampler,
@@ -1229,7 +1232,10 @@ SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
 		.id_count = 2
 	};
 
-	skybox.uniform_set_1 = m_graphics_controller.uniform_set_create(m_skybox_pipeline.shader, 1, &skybox_texture_uniform, 1);
+	Skybox skybox{
+		.image = id,
+		.uniform_set_1 = m_graphics_controller.uniform_set_create(m_skybox_pipeline.shader, 1, &skybox_texture_uniform, 1)
+	};
 
 	m_skyboxes.push_back(skybox);
 	return (RenderId)m_skyboxes.size() - 1;

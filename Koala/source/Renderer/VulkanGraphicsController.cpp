@@ -1012,14 +1012,14 @@ void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* dat
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
 }
 
-ImageId VulkanGraphicsController::image_create(const void* data, const ImageInfo& info) {
+ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 	VkFormat vk_format = (VkFormat)info.format;
 	VkDeviceSize size = vk_format_to_size(vk_format) * info.width * info.height * info.depth * info.layer_count;
 
 	VkImageUsageFlags image_usage = image_usage_to_vk_image_usage(info.usage);
 	VkMemoryPropertyFlags mem_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
-
+	
 	// TODO: Add cpu visible image memory usage
 	//if (info.usage & ImageUsageCPUVisible) {
 	//	mem_props = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
@@ -1031,31 +1031,59 @@ ImageId VulkanGraphicsController::image_create(const void* data, const ImageInfo
 		.image = vulkan_image_create(info.view_type, vk_format, { info.width, info.height, info.depth }, info.layer_count, tiling, image_usage),
 		.memory = vulkan_image_allocate(image.image, mem_props),
 		.current_layout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.full_aspect = vk_format_to_aspect(vk_format)
+		.full_aspect = vk_format_to_aspect(vk_format),
+		.tiling = tiling
 	};
 
 	m_images.push_back(image);
 	ImageId image_id = (ImageId)m_images.size() - 1;
 
-	if (data)
-		image_update(image_id, data, size);
-
 	return image_id;
 }
 
-void VulkanGraphicsController::image_update(ImageId image_id, const void* data, size_t size) {
-	Image& image = m_images[image_id];
+void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInfo& image_data_info) {
+	const Image& image = m_images[image_id];
+	const ImageInfo& image_info = image.info;
 
+	VkExtent3D extent = { image_info.width, image_info.height, image_info.depth };
+	size_t image_data_size = extent.width * extent.height * extent.depth * image_info.layer_count * vk_format_to_size((VkFormat)image_data_info.format);
 	VkImageLayout layout = image.current_layout;
+	VkImageUsageFlags image_usage = image_usage_to_vk_image_usage(image_info.usage);
+	uint32_t layer_count = image_info.layer_count;
 
-	vulkan_image_memory_barrier(image.image, image.full_aspect, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.info.layer_count);
+	vulkan_image_memory_barrier(image.image, image.full_aspect, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
 
-	vulkan_image_copy(image.image, (VkFormat)image.info.format, { image.info.width, image.info.height, image.info.depth }, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, image.info.layer_count, data, size);
+	StagingBuffer staging_buffer = staging_buffer_create(image_data_info.data, image_data_size);
 
+	if (image_info.format == image_data_info.format) {
+		vulkan_copy_buffer_to_image(image.image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+	} else {
+		Image staging_image{
+			.image = vulkan_image_create(image_info.view_type, (VkFormat)image_data_info.format, extent, layer_count, image.tiling, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT),
+			.memory = vulkan_image_allocate(staging_image.image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+		};
+
+		vulkan_image_memory_barrier(staging_image.image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+		vulkan_copy_buffer_to_image(staging_image.image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+		vulkan_image_memory_barrier(staging_image.image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layer_count);
+		
+		VkOffset3D offset = { (int32_t)extent.width, (int32_t)extent.height, (int32_t)extent.depth };
+
+		VkImageBlit region;
+		region.srcSubresource = { .aspectMask = image.full_aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count };
+		region.srcOffsets[0] = { 0, 0, 0 };
+		region.srcOffsets[1] = offset;
+		region.dstSubresource = { .aspectMask = image.full_aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count };
+		region.dstOffsets[0] = { 0, 0, 0 };
+		region.dstOffsets[1] = offset;
+
+		vkCmdBlitImage(m_frames[m_frame_index].draw_buffer, staging_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VkFilter::VK_FILTER_LINEAR);
+	}
+	
 	if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
 		layout = image_usage_to_optimal_image_layout(image.info.usage);
 
-	vulkan_image_memory_barrier(image.image, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, image.info.layer_count);
+	vulkan_image_memory_barrier(image.image, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, layer_count);
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -1233,6 +1261,20 @@ VkBuffer VulkanGraphicsController::buffer_create(VkBufferUsageFlags usage, VkDev
 	return buffer;
 }
 
+VulkanGraphicsController::StagingBuffer VulkanGraphicsController::staging_buffer_create(const void* data, size_t size) {
+	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
+	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+	void* staging_data = nullptr;
+	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
+	memcpy(staging_data, data, size);
+	vkUnmapMemory(m_context->device(), staging_memory);
+
+	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
+
+	return { staging_buffer, staging_memory };
+}
+
 VkDeviceMemory VulkanGraphicsController::buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props) {
 	VkMemoryRequirements mem_requirements;
 	vkGetBufferMemoryRequirements(m_context->device(), buffer, &mem_requirements);
@@ -1371,32 +1413,14 @@ VkImageView VulkanGraphicsController::image_view_create(const Image& image, Imag
 	return image_view;
 }
 
-void VulkanGraphicsController::vulkan_image_copy(VkImage image, VkFormat format, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count, const void* data, size_t size) {
-	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
-	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+void VulkanGraphicsController::vulkan_copy_buffer_to_image(VkImage image, StagingBuffer staging_buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count) {
+	VkBufferImageCopy region{
+		.bufferOffset = 0,
+		.imageSubresource = { .aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count },
+		.imageExtent = extent
+	};
 
-	void* staging_data = nullptr;
-	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
-	memcpy(staging_data, data, size);
-	vkUnmapMemory(m_context->device(), staging_memory);
-
-	std::vector<VkBufferImageCopy> buffer_copy_regions;
-	buffer_copy_regions.reserve(layer_count);
-	
-	uint32_t layer_size = (uint32_t)size / layer_count;
-	for (uint32_t i = 0; i < layer_count; i++) {
-		VkBufferImageCopy region{
-			.bufferOffset = i * layer_size,
-			.imageSubresource = {.aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = i, .layerCount = 1 },
-			.imageExtent = extent
-		};
-
-		buffer_copy_regions.push_back(region);
-	}
-
-	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer, image, layout, layer_count, buffer_copy_regions.data());
-
-	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
+	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer.buffer, image, layout, 1, &region);
 }
 
 void VulkanGraphicsController::image_should_have_layout(Image& image, VkImageLayout layout) {

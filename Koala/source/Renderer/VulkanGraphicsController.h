@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Common.h"
 #include "VulkanContext.h"
 
 #include <map>
@@ -9,7 +10,6 @@
 
 #include <glm/glm.hpp>
 
-using RenderId = size_t;
 using RenderPassId = RenderId;
 using FramebufferId = RenderId;
 using ImageId = RenderId;
@@ -18,32 +18,6 @@ using ShaderId = RenderId;
 using PipelineId = RenderId;
 using SamplerId = RenderId;
 using UniformSetId = RenderId;
-
-enum class Format : uint32_t {
-	Undefined = 0,
-	RGBA8_UNorm = 37,
-	RGBA8_SNorm = 38,
-	RGBA8_SRGB = 43,
-	BGRA8_UNorm = 44,
-	//BGRA8_SNorm = 45,
-	RGBA16_UNorm = 90,
-	RGBA16_SFloat = 97,
-	R32_UInt = 98,
-	R32_SInt = 99,
-	R32_SFloat = 100,
-	RG32_UInt = 101,
-	RG32_SInt = 102,
-	RG32_SFloat = 103,
-	RGB32_UInt = 104,
-	RGB32_SInt = 105,
-	RGB32_SFloat = 106,
-	RGBA32_UInt = 107,
-	RGBA32_SInt = 108,
-	RGBA32_SFloat = 109,
-	D32_SFloat = 126,
-	D24_UNorm_S8_UInt = 129,
-	D32_SFloat_S8_UInt = 130
-};
 
 enum ImageUsageFlagBits {
 	ImageUsageNone = 0,
@@ -295,6 +269,11 @@ struct ImageInfo {
 	uint32_t layer_count = 1;
 };
 
+struct ImageDataInfo {
+	Format format;
+	const void* data;
+};
+
 enum class IndexType : uint32_t {
 	Uint16 = 0,
 	Uint32 = 1
@@ -439,8 +418,8 @@ public:
 
 	void buffer_update(BufferId buffer_id, const void* data);
 
-	ImageId image_create(const void* data, const ImageInfo& info);
-	void image_update(ImageId image_id, const void* data, size_t size);
+	ImageId image_create(const ImageInfo& info);
+	void image_update(ImageId image_id, const ImageDataInfo& image_data_info);
 
 	SamplerId sampler_create(const SamplerInfo& info);
 
@@ -546,7 +525,13 @@ private:
 		};
 	};
 
+	struct StagingBuffer {
+		VkBuffer buffer;
+		VkDeviceMemory memory;
+	};
+
 	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
+	StagingBuffer staging_buffer_create(const void* data, size_t size);
 	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
 	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
 	void buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size);
@@ -558,12 +543,14 @@ private:
 		VkDeviceMemory memory;
 		VkImageLayout current_layout;
 		VkImageAspectFlags full_aspect;
+		VkImageTiling tiling;
 	};
 
 	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
 	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
-	void vulkan_image_copy(VkImage image, VkFormat format, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count, const void* data, size_t size);
+	void vulkan_copy_buffer_to_image(VkImage image, StagingBuffer staging_buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count);
+	//void vulkan_change_image_format(VkImage src_image, VkImageLayout src_layout, VkImage dst_image, VkImageLayout dst_layout, VkFilter filter);
 	void image_should_have_layout(Image& image, VkImageLayout layout);
 	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
 	
@@ -610,11 +597,6 @@ private:
 	};
 
 private:
-	struct StagingBuffer {
-		VkBuffer buffer;
-		VkDeviceMemory memory;
-	};
-
 	struct Frame {
 		VkCommandPool command_pool;
 		VkCommandBuffer setup_buffer;
