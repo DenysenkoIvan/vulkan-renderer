@@ -160,6 +160,7 @@ public:
 
 	void set_resolution(uint32_t width, uint32_t height);
 	void set_shadow_map_resolution(uint32_t width, uint32_t height);
+	void set_post_effect_constants(float exposure, float gamma);
 
 	void begin_frame(const Camera& camera, Light dir_light, Light* lights, uint32_t light_count);
 	void end_frame(uint32_t width, uint32_t height);
@@ -194,6 +195,8 @@ private:
 	struct SceneInfo {
 		LightInfo light_info;
 		Camera camera;
+		float exposure = 1.0f;
+		float gamma = 2.2f;
 		BufferId view_pos; // vec3
 		BufferId proj_inv_matrix; // mat4
 		BufferId view_inv_matrix; // mat4

@@ -431,11 +431,13 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_renderer.create(m_window.context());
 
-	uint32_t resolution_coef = 1;
+	float resolution_coef = 1.0f;
 	m_renderer.set_resolution(resolution_coef * 1920, resolution_coef * 1080);
 	
-	uint32_t shadow_map_resolution = 2048 * 4;
+	uint32_t shadow_map_resolution = 2048 * 1;
 	m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
+
+	m_renderer.set_post_effect_constants(1.75f, 2.2f);
 
 	m_prev_mouse_x = props.width / 2;
 	m_prev_mouse_y = props.height / 2;
@@ -450,7 +452,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	glm::vec3 light_pos{ 5.0f, 15.0f, 5.0f };
 	m_directional_light = {
-		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(8.0f),
+		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(5.0f),
 		.pos = light_pos,
 		.dir = glm::normalize(light_pos)
 	};

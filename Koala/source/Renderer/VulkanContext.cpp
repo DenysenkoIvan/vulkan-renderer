@@ -381,9 +381,10 @@ void VulkanContext::create_swapchain() {
 
 	if (surface_format_count == 0) throw std::runtime_error("No surface formats available");
 
-	VkFormat desirable_format = VK_FORMAT_B8G8R8A8_SRGB;
+	//VkFormat desirable_format = VK_FORMAT_B8G8R8A8_SRGB;
+	VkFormat desirable_format = VK_FORMAT_R8G8B8A8_UNORM;
 	VkColorSpaceKHR desirable_color_space = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-	
+
 	m_surface_format = surface_formats[0];
 	for (const VkSurfaceFormatKHR& surface_format : surface_formats) {
 		if (surface_format.format == desirable_format && surface_format.colorSpace == desirable_color_space) {

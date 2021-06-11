@@ -809,6 +809,11 @@ void Renderer::set_shadow_map_resolution(uint32_t width, uint32_t height) {
 	//m_deferred.shadow_map_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.shadow_map_pass, shadow_map_framebuffer_ids, 1);
 }
 
+void Renderer::set_post_effect_constants(float exposure, float gamma) {
+	m_scene_info.exposure = exposure;
+	m_scene_info.gamma = gamma;
+}
+
 void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights, uint32_t light_count) {
 	m_scene_info.camera = camera;
 	m_scene_info.light_info.light_dir = dir_light.dir;
@@ -1053,10 +1058,13 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, width, height);
 
+	float constants[2] = { m_scene_info.exposure, m_scene_info.gamma };
+
 	m_graphics_controller.draw_bind_pipeline(m_present_pipeline.pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);
 	m_graphics_controller.draw_bind_index_buffer(m_square.index_buffer, m_square.index_type);
 	m_graphics_controller.draw_bind_uniform_sets(m_present_pipeline.pipeline, 0, &m_present_pipeline.uniform_set_0, 1);
+	m_graphics_controller.draw_push_constants(m_present_pipeline.shader, ShaderStageFragment, 0, sizeof(constants), constants);
 	m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
 
 	m_graphics_controller.draw_end_for_screen();
