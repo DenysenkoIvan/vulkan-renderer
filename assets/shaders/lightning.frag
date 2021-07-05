@@ -9,14 +9,9 @@ layout(set = 0, binding = 1) uniform sampler2D ao_rough_met_map;
 layout(set = 0, binding = 2) uniform sampler2D normal_map;
 layout(set = 0, binding = 3) uniform sampler2D emissive_map;
 layout(set = 0, binding = 4) uniform sampler2D depth_map;
-layout(set = 0, binding = 5) uniform Proj {
-	mat4 proj_inv;
-};
-layout(set = 0, binding = 6) uniform View {
-	mat4 view_inv;	
-};
 
-layout(push_constant) uniform LightInfo {
+layout(push_constant) uniform Info {
+	mat4 view_proj_inv;
 	vec3 camera_pos;
 	vec3 light_dir;
 	vec3 light_color;
@@ -29,8 +24,7 @@ vec3 calculate_world_space_position() {
 	float depth = texture(depth_map, in_uv).r;
 
 	vec4 clip_space_pos = vec4(in_uv * 2.0f - 1.0f, depth, 1.0f);
-	vec4 view_space_pos = proj_inv * clip_space_pos;
-	vec4 world_space_pos = view_inv * view_space_pos;
+	vec4 world_space_pos = view_proj_inv * clip_space_pos;
 	
 	return world_space_pos.xyz / world_space_pos.w;
 }

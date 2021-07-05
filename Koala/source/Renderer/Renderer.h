@@ -193,15 +193,18 @@ private:
 	};
 
 	struct SceneInfo {
-		LightInfo light_info;
-		Camera camera;
-		float exposure = 1.0f;
-		float gamma = 2.2f;
-		BufferId view_pos; // vec3
-		BufferId proj_inv_matrix; // mat4
-		BufferId view_inv_matrix; // mat4
-		BufferId projview_matrix; // mat4
-		BufferId projview_matrix_no_translation; // mat4
+		struct Data {
+			LightInfo light_info;
+			Camera camera;
+			float exposure = 1.0f;
+			float gamma = 2.2f;
+		} data;
+		
+		struct GPU {
+			BufferId view_pos; // vec3
+			BufferId projview_matrix; // mat4
+			BufferId projview_matrix_no_translation; // mat4
+		} gpu;
 	} m_scene_info;
 
 	struct Deferred {
@@ -225,8 +228,6 @@ private:
 		FramebufferId g_framebuffer;
 		RenderPassId depth_copy_pass;
 		FramebufferId depth_copy_framebuffer;
-		//RenderPassId light_pass;
-		//FramebufferId light_framebuffer;
 		RenderPassId composition_pass;
 		FramebufferId composition_framebuffer;
 		RenderPassId present_pass;

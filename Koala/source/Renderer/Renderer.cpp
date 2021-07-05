@@ -97,11 +97,9 @@ void Renderer::create(VulkanContext* context) {
 	}
 
 	// Setup scene resources
-	m_scene_info.view_pos = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::vec3));
-	m_scene_info.proj_inv_matrix = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
-	m_scene_info.view_inv_matrix = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
-	m_scene_info.projview_matrix = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
-	m_scene_info.projview_matrix_no_translation = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
+	m_scene_info.gpu.view_pos = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::vec3));
+	m_scene_info.gpu.projview_matrix = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
+	m_scene_info.gpu.projview_matrix_no_translation = m_graphics_controller.uniform_buffer_create(nullptr, sizeof(glm::mat4));
 
 	// Create deferred render targets
 	{
@@ -265,7 +263,7 @@ void Renderer::create(VulkanContext* context) {
 		UniformInfo g_pipeline_uniform_set_0;
 		g_pipeline_uniform_set_0.type = UniformType::UniformBuffer;
 		g_pipeline_uniform_set_0.binding = 0;
-		g_pipeline_uniform_set_0.ids = &m_scene_info.projview_matrix;
+		g_pipeline_uniform_set_0.ids = &m_scene_info.gpu.projview_matrix;
 		g_pipeline_uniform_set_0.id_count = 1;
 
 		m_g_pipeline.uniform_set_0 = m_graphics_controller.uniform_set_create(m_g_pipeline.shader, 0, &g_pipeline_uniform_set_0, 1);
@@ -410,7 +408,7 @@ void Renderer::create(VulkanContext* context) {
 		std::array<UniformInfo, 2> blend_pipeline_uniform_set_0;
 		blend_pipeline_uniform_set_0[0].type = UniformType::UniformBuffer;
 		blend_pipeline_uniform_set_0[0].binding = 0;
-		blend_pipeline_uniform_set_0[0].ids = &m_scene_info.projview_matrix;
+		blend_pipeline_uniform_set_0[0].ids = &m_scene_info.gpu.projview_matrix;
 		blend_pipeline_uniform_set_0[0].id_count = 1;
 		blend_pipeline_uniform_set_0[1].type = UniformType::UniformBuffer;
 		blend_pipeline_uniform_set_0[1].binding = 1;
@@ -470,7 +468,7 @@ void Renderer::create(VulkanContext* context) {
 		UniformInfo skybox_uniform{
 			.type = UniformType::UniformBuffer,
 			.binding = 0,
-			.ids = &m_scene_info.projview_matrix_no_translation,
+			.ids = &m_scene_info.gpu.projview_matrix_no_translation,
 			.id_count = 1
 		};
 
@@ -528,7 +526,7 @@ void Renderer::create(VulkanContext* context) {
 		UniformInfo coord_system_uniform{
 			.type = UniformType::UniformBuffer,
 			.binding = 0,
-			.ids = &m_scene_info.projview_matrix,
+			.ids = &m_scene_info.gpu.projview_matrix,
 			.id_count = 1
 		};
 
@@ -738,7 +736,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	RenderId emissive_ids[2] = { m_deferred.emissive, m_light_pipeline.sampler };
 	RenderId depth_ids[2] = { m_deferred.depth, m_light_pipeline.sampler };
 
-	std::array<UniformInfo, 7> light_set_0_bindings{};
+	std::array<UniformInfo, 5> light_set_0_bindings{};
 	light_set_0_bindings[0].type = UniformType::CombinedImageSampler;
 	light_set_0_bindings[0].image_usage = ImageUsageColorSampled;
 	light_set_0_bindings[0].binding = 0;
@@ -764,15 +762,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	light_set_0_bindings[4].binding = 4;
 	light_set_0_bindings[4].ids = depth_ids;
 	light_set_0_bindings[4].id_count = 2;
-	light_set_0_bindings[5].type = UniformType::UniformBuffer;
-	light_set_0_bindings[5].binding = 5;
-	light_set_0_bindings[5].ids = &m_scene_info.proj_inv_matrix;
-	light_set_0_bindings[5].id_count = 1;
-	light_set_0_bindings[6].type = UniformType::UniformBuffer;
-	light_set_0_bindings[6].binding = 6;
-	light_set_0_bindings[6].ids = &m_scene_info.view_inv_matrix;
-	light_set_0_bindings[6].id_count = 1;
-
+	
 	m_light_pipeline.uniform_set_0 = m_graphics_controller.uniform_set_create(m_light_pipeline.shader, 0, light_set_0_bindings.data(), (uint32_t)light_set_0_bindings.size());
 
 	// Composition
@@ -810,32 +800,28 @@ void Renderer::set_shadow_map_resolution(uint32_t width, uint32_t height) {
 }
 
 void Renderer::set_post_effect_constants(float exposure, float gamma) {
-	m_scene_info.exposure = exposure;
-	m_scene_info.gamma = gamma;
+	m_scene_info.data.exposure = exposure;
+	m_scene_info.data.gamma = gamma;
 }
 
 void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights, uint32_t light_count) {
-	m_scene_info.camera = camera;
-	m_scene_info.light_info.light_dir = dir_light.dir;
-	m_scene_info.light_info.light_color = dir_light.color;
+	m_scene_info.data.camera = camera;
+	m_scene_info.data.light_info.light_dir = dir_light.dir;
+	m_scene_info.data.light_info.light_color = dir_light.color;
 
 	// Update camera
 	{
-		m_scene_info.light_info.camera_pos = camera.eye;
-		m_graphics_controller.buffer_update(m_scene_info.view_pos, &camera.eye);
+		m_scene_info.data.light_info.camera_pos = camera.eye;
+		m_graphics_controller.buffer_update(m_scene_info.gpu.view_pos, &camera.eye);
 
 		glm::mat4 view = camera.view_matrix();
 		glm::mat4 proj = camera.proj_matrix();
-		glm::mat4 view_inv = glm::inverse(view);
-		glm::mat4 proj_inv = glm::inverse(proj);
 		glm::mat4 proj_view = proj * view;
 		glm::mat4 view_no_translation = glm::mat4(glm::mat3(view));
 		glm::mat4 skybox_view_proj = proj * view_no_translation;
 
-		m_graphics_controller.buffer_update(m_scene_info.proj_inv_matrix, &proj_inv);
-		m_graphics_controller.buffer_update(m_scene_info.view_inv_matrix, &view_inv);
-		m_graphics_controller.buffer_update(m_scene_info.projview_matrix, &proj_view);
-		m_graphics_controller.buffer_update(m_scene_info.projview_matrix_no_translation, &skybox_view_proj);
+		m_graphics_controller.buffer_update(m_scene_info.gpu.projview_matrix, &proj_view);
+		m_graphics_controller.buffer_update(m_scene_info.gpu.projview_matrix_no_translation, &skybox_view_proj);
 	}
 
 	// setup dir light
@@ -851,7 +837,7 @@ void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights,
 	}
 
 	// Uptade blend uniform buffer
-	m_graphics_controller.buffer_update(m_blend_pipeline.uniform_buffer, &m_scene_info.light_info);
+	m_graphics_controller.buffer_update(m_blend_pipeline.uniform_buffer, &m_scene_info.data.light_info);
 
 	// Save lights
 	{
@@ -946,10 +932,20 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.composition_info.width, m_deferred.composition_info.height);
 
 	// Lightning
+	glm::mat4 view = m_scene_info.data.camera.view_matrix();
+	glm::mat4 proj = m_scene_info.data.camera.proj_matrix();
+	glm::mat4 view_inv = glm::inverse(view);
+	glm::mat4 proj_inv = glm::inverse(proj);
+	glm::mat4 view_proj_inv = view_inv * proj_inv;
+
+	uint8_t push_constants_data[sizeof(glm::mat4) + sizeof(LightInfo)];
+	memcpy(push_constants_data, &view_proj_inv, sizeof(glm::mat4));
+	memcpy(push_constants_data + sizeof(glm::mat4), &m_scene_info.data.light_info, sizeof(LightInfo));
+
 	m_graphics_controller.draw_bind_pipeline(m_light_pipeline.pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);
 	m_graphics_controller.draw_bind_index_buffer(m_square.index_buffer, m_square.index_type);
-	m_graphics_controller.draw_push_constants(m_light_pipeline.shader, ShaderStageFragment, 0, sizeof(LightInfo), &m_scene_info.light_info);
+	m_graphics_controller.draw_push_constants(m_light_pipeline.shader, ShaderStageFragment, 0, sizeof(push_constants_data), push_constants_data);
 	m_graphics_controller.draw_bind_uniform_sets(m_light_pipeline.pipeline, 0, &m_light_pipeline.uniform_set_0, 1);
 	m_graphics_controller.draw_set_stencil_reference(StencilFaces::FrontAndBack, stencil_reference);
 	m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
@@ -1058,7 +1054,7 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, width, height);
 
-	float constants[2] = { m_scene_info.exposure, m_scene_info.gamma };
+	float constants[2] = { m_scene_info.data.exposure, m_scene_info.data.gamma };
 
 	m_graphics_controller.draw_bind_pipeline(m_present_pipeline.pipeline);
 	m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);

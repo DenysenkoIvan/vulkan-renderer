@@ -428,8 +428,8 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_renderer.create(m_window.context());
 
-	float resolution_coef = 1.5f;
-	m_renderer.set_resolution(resolution_coef * 1920, resolution_coef * 1080);
+	float resolution_coef = 1.0f;
+	m_renderer.set_resolution(resolution_coef * 1280, resolution_coef * 720);
 	
 	uint32_t shadow_map_resolution = 2048 * 1;
 	m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
@@ -454,7 +454,7 @@ Application::Application(const ApplicationProperties& props) {
 		.dir = glm::normalize(light_pos)
 	};
 
-	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
+	m_model = load_gltf_model("../assets/models/mando_helmet/scene.gltf");
 
 	int width = 0, height = 0;
 	std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);
