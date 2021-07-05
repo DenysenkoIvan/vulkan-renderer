@@ -393,9 +393,6 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 	if (!index_buffer.empty())
 		model.index_buffer_id = m_renderer.index_buffer_create(index_buffer.data(), index_buffer.size());
 
-	std::cout << "Vertex count: " << vertex_buffer.size() << '\n';
-	std::cout << "Index count: " << index_buffer.size() << '\n';
-
 	return model;
 }
 
@@ -425,13 +422,13 @@ Application::Application(const ApplicationProperties& props) {
 	window_props.width = props.width;
 	window_props.height = props.height;
 	window_props.title = props.app_name;
-	window_props.callback = ([this](Event& e) { this->on_event(e); });
+	window_props.callback = ([this](const Event& e) { this->on_event(e); });
 
 	m_window.initialize(window_props);
 
 	m_renderer.create(m_window.context());
 
-	float resolution_coef = 1.0f;
+	float resolution_coef = 1.5f;
 	m_renderer.set_resolution(resolution_coef * 1920, resolution_coef * 1080);
 	
 	uint32_t shadow_map_resolution = 2048 * 1;
@@ -452,7 +449,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	glm::vec3 light_pos{ 5.0f, 15.0f, 5.0f };
 	m_directional_light = {
-		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(5.0f),
+		.color = glm::vec3(23.47f, 21.31f, 20.79f) / glm::vec3(2.0f),
 		.pos = light_pos,
 		.dir = glm::normalize(light_pos)
 	};
@@ -477,12 +474,52 @@ Application::~Application() {
 	m_renderer.destroy();
 }
 
-void Application::on_event(Event& e) {
-	EventDispatcher dispatcher(e);
+void Application::on_event(const Event& e) {
+	if (e.type == EventType::Application) {
+		const ApplicationEvent& event = e.application;
 
-	dispatcher.dispatch<WindowResizeEvent>([this](WindowResizeEvent& e) { this->on_window_resize(e); });
-	dispatcher.dispatch<WindowCloseEvent>([this](WindowCloseEvent& e) { this->on_window_close(e); });
-	dispatcher.dispatch<MouseMovedEvent>([this](MouseMovedEvent& e) { this->on_mouse_move(e); });
+		if (event.type == ApplicationEventType::WindowCloseEvent)
+			m_running = false;
+		else if (event.type == ApplicationEventType::WindowResizeEvent)
+			m_camera.aspect_ratio = (float)event.window_resize.width / (float)event.window_resize.height;
+	} else if (e.type == EventType::Mouse) {
+		const MouseEvent& event = e.mouse;
+
+		if (event.type == MouseEventType::MouseMoved)
+			on_mouse_move(event.mouse_moved);
+	} else if (e.type == EventType::Keyboard) {
+		const KeyboardEvent& event = e.keyboard;
+
+		if (event.type == KeyboardEventType::KeyPressed) {
+			int key_code = event.key_pressed.key_code;
+
+			if (key_code == GLFW_KEY_W)
+				m_camera_movement |= CameraMoveForward;
+			else if (key_code == GLFW_KEY_S)
+				m_camera_movement |= CameraMoveBackward;
+			else if (key_code == GLFW_KEY_A)
+				m_camera_movement |= CameraMoveLeft;
+			else if (key_code == GLFW_KEY_D)
+				m_camera_movement |= CameraMoveRight;
+			else if (key_code == GLFW_KEY_UP)
+				m_move_speed *= 2.0f;
+			else if (key_code == GLFW_KEY_DOWN)
+				m_move_speed /= 2.0f;
+			else if (key_code == GLFW_KEY_R)
+				m_camera.eye = glm::vec3(0.0f);
+		} else if (event.type == KeyboardEventType::KeyReleased) {
+			int key_code = event.key_released.key_code;
+
+			if (key_code == GLFW_KEY_W)
+				m_camera_movement &= ~CameraMoveForward;
+			else if (key_code == GLFW_KEY_S)
+				m_camera_movement &= ~CameraMoveBackward;
+			else if (key_code == GLFW_KEY_A)
+				m_camera_movement &= ~CameraMoveLeft;
+			else if (key_code == GLFW_KEY_D)
+				m_camera_movement &= ~CameraMoveRight;
+		}
+	}
 }
 
 void Application::run() {
@@ -496,41 +533,33 @@ void Application::run() {
 	}
 }
 
-void Application::on_window_close(WindowCloseEvent& e) {
-	m_running = false;
-}
-
-void Application::on_window_resize(WindowResizeEvent& e) {
-	m_camera.aspect_ratio = (float)e.width() / (float)e.height();
-}
-
-void Application::on_mouse_move(MouseMovedEvent& e) {
+void Application::on_mouse_move(const MouseMovedEvent& e) {
 	static bool first_mouse = true;
 	if (first_mouse) {
-		m_prev_mouse_x = (int)e.x();
-		m_prev_mouse_y = (int)e.y();
+		m_prev_mouse_x = (int)e.x;
+		m_prev_mouse_y = (int)e.y;
 		first_mouse = false;
 	}
 
-	m_mouse_x = (int)e.x();
-	m_mouse_y = (int)e.y();
+	m_mouse_x = (int)e.x;
+	m_mouse_y = (int)e.y;
 }
 
 void Application::on_update() {
 	auto current_time = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - m_start_time_point).count();
+	double time = std::chrono::duration<double, std::chrono::seconds::period>(current_time - m_start_time_point).count();
 
-	float delta_time = time - m_previous_time_step;
+	double delta_time = time - m_previous_time_step;
 
-	float speed = delta_time * 5.0f;
-	if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_W) == GLFW_PRESS)
-		m_camera.move_forward(speed);
-	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_S) == GLFW_PRESS)
-		m_camera.move_forward(-speed);
-	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_A) == GLFW_PRESS)
-		m_camera.move_left(speed);
-	else if (glfwGetKey(m_window.get_GLFWwindow(), GLFW_KEY_D) == GLFW_PRESS)
-		m_camera.move_left(-speed);
+	float distance = (float)delta_time * m_move_speed;
+	if (m_camera_movement & CameraMoveForward)
+		m_camera.move_forward(distance);
+	if (m_camera_movement & CameraMoveBackward)
+		m_camera.move_forward(-distance);
+	if (m_camera_movement & CameraMoveLeft)
+		m_camera.move_left(distance);
+	if (m_camera_movement & CameraMoveRight)
+		m_camera.move_left(-distance);
 		
 	float delta_mouse_x = (float)m_mouse_x - m_prev_mouse_x;
 	float delta_mouse_y = (float)m_mouse_y - m_prev_mouse_y;

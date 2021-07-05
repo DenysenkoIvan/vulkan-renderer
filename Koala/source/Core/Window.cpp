@@ -63,11 +63,17 @@ void Window::init_window(const WindowProperties& window_props) {
 
 	glfwSetWindowUserPointer(m_window, &m_window_info);
 
-	glfwSetWindowCloseCallback(m_window, [](GLFWwindow *window) {
+	glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
 		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
-		WindowCloseEvent e;
-		window_info.callback(e);
+		Event event{
+			.type = EventType::Application,
+			.application{
+				.type = ApplicationEventType::WindowCloseEvent
+			}
+		};
+
+		window_info.callback(event);
 	});
 
 	glfwSetWindowSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
@@ -81,57 +87,82 @@ void Window::init_window(const WindowProperties& window_props) {
 		window_info.width = width;
 		window_info.height = height;
 
-		WindowResizeEvent e(width, height);
-		window_info.callback(e);
+		Event event{
+			.type = EventType::Application,
+			.application{
+				.type = ApplicationEventType::WindowResizeEvent,
+				.window_resize{
+					.width = width,
+					.height = height
+				}
+			}
+		};
+
+		window_info.callback(event);
 	});
 
-	glfwSetKeyCallback(m_window, [](GLFWwindow *window, int key, int scancode, int action, int mods) {
+	glfwSetKeyCallback(m_window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
 		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
+		Event event{
+			.type = EventType::Keyboard
+		};
+
 		switch (action) {
-			case GLFW_PRESS:
-			{
-				KeyPressedEvent e(key, 0);
-				window_info.callback(e);
-				break;
-			}
-			case GLFW_RELEASE:
-			{
-				KeyReleasedEvent e(key);
-				window_info.callback(e);
-				break;
-			}
-			case GLFW_REPEAT:
-			{
-				KeyPressedEvent e(key, 1);
-				window_info.callback(e);
-				break;
-			}
+		case GLFW_PRESS:
+			event.keyboard.type = KeyboardEventType::KeyPressed;
+			event.keyboard.key_pressed.key_code = key;
+			break;
+		case GLFW_RELEASE:
+			event.keyboard.type = KeyboardEventType::KeyReleased;
+			event.keyboard.key_released.key_code = key;
+			break;
+		case GLFW_REPEAT:
+			event.keyboard.type = KeyboardEventType::KeyPressed;
+			event.keyboard.key_pressed.key_code = key;
+			event.keyboard.key_pressed.repeat_count = 1;
+			break;
 		}
+
+		window_info.callback(event);
 	});
 
 	glfwSetCursorPosCallback(m_window, [](GLFWwindow* window, double xpos, double ypos) {
 		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
-		MouseMovedEvent e(xpos, ypos);
-		window_info.callback(e);
+		Event event{
+			.type = EventType::Mouse,
+			.mouse {
+				.type = MouseEventType::MouseMoved,
+				.mouse_moved{
+					.x = (int)xpos,
+					.y = (int)ypos
+				}
+			}
+		};
+
+		window_info.callback(event);
 	});
 
 	glfwSetMouseButtonCallback(m_window, [](GLFWwindow* window, int button, int action, int mods) {
 		WindowInfo& window_info = *(WindowInfo*)glfwGetWindowUserPointer(window);
 
+		Event event{
+			.type = EventType::Mouse
+		};
+
 		switch (action) {
-			case GLFW_PRESS: {
-				MouseButtonPressedEvent e(button);
-				window_info.callback(e);
-				break;
-			}
-			case GLFW_RELEASE: {
-				MouseButtonReleasedEvent e(button);
-				window_info.callback(e);
-				break;
-			}
+		case GLFW_PRESS:
+			event.mouse.type = MouseEventType::MouseButtonPressed;
+			event.mouse.mouse_button_pressed.button = button;
+			break;
+		case GLFW_RELEASE:
+			event.mouse.type = MouseEventType::MouseButtonReleased;
+			event.mouse.mouse_button_released.button = button;
+			break;
 		}
+
+		window_info.callback(event);
 	});
 }
 

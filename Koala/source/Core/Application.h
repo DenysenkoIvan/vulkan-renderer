@@ -19,6 +19,15 @@ struct ApplicationProperties {
 	uint32_t height = 480;
 };
 
+enum CameraMovementFlagBits {
+	CameraMoveNone = 0,
+	CameraMoveForward = 1,
+	CameraMoveBackward = 2,
+	CameraMoveLeft = 4,
+	CameraMoveRight = 8
+};
+using CameraMovementFlags = uint32_t;
+
 struct Primitive {
 	size_t first_index = 0;
 	size_t index_count = 0;
@@ -55,12 +64,10 @@ public:
 	~Application();
 
 	void run();
-	void on_event(Event& e);
+	void on_event(const Event& e);
 
 private:
-	void on_window_close(WindowCloseEvent& e);
-	void on_window_resize(WindowResizeEvent& e);
-	void on_mouse_move(MouseMovedEvent& e);
+	void on_mouse_move(const MouseMovedEvent& e);
 	void on_update();
 	void on_render();
 
@@ -69,7 +76,7 @@ private:
 
 private:
 	std::chrono::steady_clock::time_point m_start_time_point;
-	float m_previous_time_step;
+	double m_previous_time_step;
 	int m_prev_mouse_x, m_prev_mouse_y;
 	int m_mouse_x, m_mouse_y;
 	
@@ -77,6 +84,9 @@ private:
 	Window m_window;
 	bool m_running = true;
 	double m_prev_time_point = 0.0;
+
+	CameraMovementFlags m_camera_movement = CameraMoveNone;
+	float m_move_speed = 10.0f;
 
 	Resolution m_monitor_resolution;
 	Renderer m_renderer;

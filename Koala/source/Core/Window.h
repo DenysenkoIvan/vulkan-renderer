@@ -15,7 +15,7 @@
 struct WindowProperties {
 	std::string_view title;
 	uint32_t width, height;
-	Event::event_handler_fn callback;
+	std::function<void(const Event&)> callback;
 };
 
 struct Resolution {
@@ -52,7 +52,7 @@ private:
 	static int s_windows_created_count;
 private:
 	struct WindowInfo {
-		Event::event_handler_fn callback;
+		std::function<void(const Event&)> callback;
 		int width;
 		int height;
 		std::unique_ptr<VulkanContext> context;
