@@ -127,17 +127,11 @@ void Renderer::create(VulkanContext* context) {
 		m_deferred.emissive_info.depth = 1;
 		m_deferred.emissive_info.layer_count = 1;
 
-		m_deferred.depth_stencil_info.usage = ImageUsageDepthStencilAttachment | ImageUsageDepthSampled;
+		m_deferred.depth_stencil_info.usage = ImageUsageDepthStencilAttachment | ImageUsageDepthStencilReadOnly | ImageUsageDepthSampled;
 		m_deferred.depth_stencil_info.view_type = ImageViewType::TwoD;
 		m_deferred.depth_stencil_info.format = Format::D24_UNorm_S8_UInt;
 		m_deferred.depth_stencil_info.depth = 1;
 		m_deferred.depth_stencil_info.layer_count = 1;
-
-		m_deferred.depth_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
-		m_deferred.depth_info.view_type = ImageViewType::TwoD;
-		m_deferred.depth_info.format = Format::R32_SFloat;
-		m_deferred.depth_info.depth = 1;
-		m_deferred.depth_info.layer_count = 1;
 
 		m_deferred.composition_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.composition_info.view_type = ImageViewType::TwoD;
@@ -176,9 +170,9 @@ void Renderer::create(VulkanContext* context) {
 		g_pass_attachments[3].initial_action = InitialAction::Clear;
 		g_pass_attachments[3].final_action = FinalAction::Store;
 		// Depth-Stencil
-		g_pass_attachments[4].previous_usage = ImageUsageDepthSampled;
+		g_pass_attachments[4].previous_usage = ImageUsageDepthStencilReadOnly;
 		g_pass_attachments[4].current_usage = ImageUsageDepthStencilAttachment;
-		g_pass_attachments[4].next_usage = ImageUsageDepthSampled;
+		g_pass_attachments[4].next_usage = ImageUsageDepthStencilReadOnly;
 		g_pass_attachments[4].format = m_deferred.depth_stencil_info.format;
 		g_pass_attachments[4].initial_action = InitialAction::Clear;
 		g_pass_attachments[4].final_action = FinalAction::Store;
@@ -187,17 +181,6 @@ void Renderer::create(VulkanContext* context) {
 
 		m_deferred.g_pass = m_graphics_controller.render_pass_create(g_pass_attachments.data(), (uint32_t)g_pass_attachments.size());
 
-		// Depth copy pass
-		std::array<RenderPassAttachment, 1> depth_copy_attachments{};
-		depth_copy_attachments[0].previous_usage = ImageUsageColorSampled;
-		depth_copy_attachments[0].current_usage = ImageUsageColorAttachment;
-		depth_copy_attachments[0].next_usage = ImageUsageColorSampled;
-		depth_copy_attachments[0].format = m_deferred.depth_info.format;
-		depth_copy_attachments[0].initial_action = InitialAction::Clear;
-		depth_copy_attachments[0].final_action = FinalAction::Store;
-
-		m_deferred.depth_copy_pass = m_graphics_controller.render_pass_create(depth_copy_attachments.data(), (uint32_t)depth_copy_attachments.size());
-
 		std::array<RenderPassAttachment, 2> composition_attachments{};
 		composition_attachments[0].previous_usage = ImageUsageColorSampled;
 		composition_attachments[0].current_usage = ImageUsageColorAttachment;
@@ -205,8 +188,8 @@ void Renderer::create(VulkanContext* context) {
 		composition_attachments[0].format = m_deferred.composition_info.format;
 		composition_attachments[0].initial_action = InitialAction::Clear;
 		composition_attachments[0].final_action = FinalAction::Store;
-		composition_attachments[1].previous_usage = ImageUsageDepthSampled;
-		composition_attachments[1].current_usage = ImageUsageDepthStencilAttachment;
+		composition_attachments[1].previous_usage = ImageUsageDepthStencilReadOnly;
+		composition_attachments[1].current_usage = ImageUsageDepthStencilReadOnly | ImageUsageDepthSampled;
 		composition_attachments[1].next_usage = ImageUsageDepthStencilAttachment;
 		composition_attachments[1].format = m_deferred.depth_stencil_info.format;
 		composition_attachments[1].initial_action = InitialAction::Load;
@@ -252,6 +235,8 @@ void Renderer::create(VulkanContext* context) {
 		g_pipeline_info.shader_id = m_g_pipeline.shader;
 		g_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
 		g_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
+		g_pipeline_info.depth_stencil.depth_test_enable = true;
+		g_pipeline_info.depth_stencil.depth_write_enable = true;
 		g_pipeline_info.depth_stencil.stencil_test_enable = true;
 		g_pipeline_info.depth_stencil.depth_compare_op = CompareOp::Less;
 		g_pipeline_info.color_blend.attachment_count = (uint32_t)blend_attachments.size();
@@ -267,51 +252,6 @@ void Renderer::create(VulkanContext* context) {
 		g_pipeline_uniform_set_0.id_count = 1;
 
 		m_g_pipeline.uniform_set_0 = m_graphics_controller.uniform_set_create(m_g_pipeline.shader, 0, &g_pipeline_uniform_set_0, 1);
-	}
-
-	// Create depth copy pipeline
-	{
-		auto vert_spv = load_spv("../assets/shaders/present.vert.spv");
-		auto frag_spv = load_spv("../assets/shaders/depth_copy.frag.spv");
-
-		std::array<ShaderStage, 2> shader_stages;
-		shader_stages[0] = {
-			.stage = ShaderStageVertex,
-			.spv = vert_spv.data(),
-			.spv_size = vert_spv.size()
-		};
-		shader_stages[1] = {
-			.stage = ShaderStageFragment,
-			.spv = frag_spv.data(),
-			.spv_size = frag_spv.size()
-		};
-
-		m_depth_copy_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
-
-		std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
-
-		std::array<ColorBlendAttachmentState, 1> depth_copy_attachments{};
-		depth_copy_attachments[0].blend_enable = false;
-		depth_copy_attachments[0].color_write_mask = ColorComponentR;
-
-		PipelineInfo depth_copy_pipeline_info{};
-		depth_copy_pipeline_info.shader_id = m_depth_copy_pipeline.shader;
-		depth_copy_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
-		depth_copy_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
-		depth_copy_pipeline_info.depth_stencil.depth_test_enable = false;
-		depth_copy_pipeline_info.color_blend.attachment_count = (uint32_t)depth_copy_attachments.size();
-		depth_copy_pipeline_info.color_blend.attachments = depth_copy_attachments.data();
-		depth_copy_pipeline_info.render_pass_id = m_deferred.depth_copy_pass;
-
-		m_depth_copy_pipeline.pipeline = m_graphics_controller.pipeline_create(depth_copy_pipeline_info);
-
-		SamplerInfo sampler_info{
-			.mag_filter = Filter::Nearest,
-			.min_filter = Filter::Nearest,
-			.mip_map_mode = MipMapMode::Nearest
-		};
-
-		m_depth_copy_pipeline.sampler = m_graphics_controller.sampler_create(sampler_info);
 	}
 
 	// Create light pipeline
@@ -343,6 +283,7 @@ void Renderer::create(VulkanContext* context) {
 		light_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
 		light_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 		light_pipeline_info.depth_stencil.depth_test_enable = false;
+		light_pipeline_info.depth_stencil.depth_write_enable = false;
 		light_pipeline_info.depth_stencil.stencil_test_enable = true;
 		light_pipeline_info.depth_stencil.front.pass_op = StencilOp::Keep;
 		light_pipeline_info.depth_stencil.front.compare_op = CompareOp::Equal;
@@ -399,6 +340,8 @@ void Renderer::create(VulkanContext* context) {
 		blend_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 		blend_pipeline_info.color_blend.attachment_count = (uint32_t)blend_attachments.size();
 		blend_pipeline_info.color_blend.attachments = blend_attachments.data();
+		blend_pipeline_info.depth_stencil.depth_test_enable = true;
+		blend_pipeline_info.depth_stencil.depth_write_enable = false;
 		blend_pipeline_info.render_pass_id = m_deferred.composition_pass;
 
 		m_blend_pipeline.pipeline = m_graphics_controller.pipeline_create(blend_pipeline_info);
@@ -446,7 +389,7 @@ void Renderer::create(VulkanContext* context) {
 		PipelineInfo skybox_pipeline_info{};
 		skybox_pipeline_info.shader_id = m_skybox_pipeline.shader;
 		skybox_pipeline_info.depth_stencil.depth_test_enable = true;
-		skybox_pipeline_info.depth_stencil.depth_write_enable = true;
+		skybox_pipeline_info.depth_stencil.depth_write_enable = false;
 		skybox_pipeline_info.color_blend.attachments = skybox_attachments.data();
 		skybox_pipeline_info.color_blend.attachment_count = (uint32_t)skybox_attachments.size();
 		skybox_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
@@ -503,6 +446,8 @@ void Renderer::create(VulkanContext* context) {
 		PipelineInfo coord_system_pipeline_info{};
 		coord_system_pipeline_info.shader_id = m_coord_system_pipeline.shader;
 		coord_system_pipeline_info.assembly.topology = PrimitiveTopology::LineList;
+		coord_system_pipeline_info.depth_stencil.depth_test_enable = true;
+		coord_system_pipeline_info.depth_stencil.depth_write_enable = false;
 		coord_system_pipeline_info.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
 		coord_system_pipeline_info.dynamic_states.dynamic_states = dynamic_states.data();
 		coord_system_pipeline_info.color_blend.attachment_count = (uint32_t)coord_system_attachments.size();
@@ -689,52 +634,20 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	m_deferred.depth_stencil_info.height = height;
 	m_deferred.depth_stencil = m_graphics_controller.image_create(m_deferred.depth_stencil_info);
 
-	// Depth
-	m_deferred.depth_info.width = width;
-	m_deferred.depth_info.height = height;
-	m_deferred.depth = m_graphics_controller.image_create(m_deferred.depth_info);
-
-	RenderId depth_copy_ids[2] = { m_deferred.depth_stencil, m_depth_copy_pipeline.sampler };
-
-	UniformInfo depth_copy_uniform_set_0{
-		.type = UniformType::CombinedImageSampler,
-		.image_usage = ImageUsageDepthSampled,
-		.binding = 0,
-		.ids = depth_copy_ids,
-		.id_count = 2
-	};
-
-	m_depth_copy_pipeline.uniform_set_0 = m_graphics_controller.uniform_set_create(m_depth_copy_pipeline.shader, 0, &depth_copy_uniform_set_0, 1);
-
 	// G framebuffer
 	std::array<ImageId, 5> g_fb_ids = { m_deferred.albedo, m_deferred.ao_rough_met, m_deferred.normals, m_deferred.emissive, m_deferred.depth_stencil };
 	m_deferred.g_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.g_pass, g_fb_ids.data(), (uint32_t)g_fb_ids.size());
-
-	std::array<ImageId, 1> depth_copy_fb_ids = { m_deferred.depth };
-	m_deferred.depth_copy_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.depth_copy_pass, depth_copy_fb_ids.data(), (uint32_t)depth_copy_fb_ids.size());
-
-	// Screen-space shadow map
-	//m_deferred.ss_shadows_info.width = width;
-	//m_deferred.ss_shadows_info.height = height;
-	//m_deferred.ss_shadows = m_graphics_controller.image_create(nullptr, m_deferred.ss_shadows_info);
 
 	// Composition
 	m_deferred.composition_info.width = width;
 	m_deferred.composition_info.height = height;
 	m_deferred.composition = m_graphics_controller.image_create(m_deferred.composition_info);
 
-	//std::array<ImageId, 1> ss_shadows_fb_ids = { m_deferred.ss_shadows };
-	//m_deferred.ss_shadows_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.ss_shadows_pass, ss_shadows_fb_ids.data(), (uint32_t)ss_shadows_fb_ids.size());
-
-	// Light
-	//std::array<ImageId, 2> light_fb_ids = { m_deferred.composition, m_deferred.depth_stencil };
-	//m_deferred.light_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.light_pass, light_fb_ids.data(), (uint32_t)light_fb_ids.size());
-
 	RenderId albedo_ids[2] = { m_deferred.albedo, m_light_pipeline.sampler };
 	RenderId ao_rough_met_ids[2] = { m_deferred.ao_rough_met, m_light_pipeline.sampler };
 	RenderId normal_ids[2] = { m_deferred.normals, m_light_pipeline.sampler };
 	RenderId emissive_ids[2] = { m_deferred.emissive, m_light_pipeline.sampler };
-	RenderId depth_ids[2] = { m_deferred.depth, m_light_pipeline.sampler };
+	RenderId depth_ids[2] = { m_deferred.depth_stencil, m_light_pipeline.sampler };
 
 	std::array<UniformInfo, 5> light_set_0_bindings{};
 	light_set_0_bindings[0].type = UniformType::CombinedImageSampler;
@@ -758,7 +671,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	light_set_0_bindings[3].ids = emissive_ids;
 	light_set_0_bindings[3].id_count = 2;
 	light_set_0_bindings[4].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[4].image_usage = ImageUsageColorSampled;
+	light_set_0_bindings[4].image_usage = ImageUsageDepthSampled;
 	light_set_0_bindings[4].binding = 4;
 	light_set_0_bindings[4].ids = depth_ids;
 	light_set_0_bindings[4].id_count = 2;
@@ -905,24 +818,6 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 
 	m_graphics_controller.draw_end();
 
-
-	// Depth copy pass
-	std::array<ClearValue, 1> depth_copy_clear_values{};
-	depth_copy_clear_values[0].color = { 1.0f, 1.0f, 1.0f, 1.0f };
-
-	m_graphics_controller.draw_begin(m_deferred.depth_copy_framebuffer, depth_copy_clear_values.data(), (uint32_t)depth_copy_clear_values.size());
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.depth_info.width, (float)m_deferred.depth_info.height, 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.depth_info.width, m_deferred.depth_info.height);
-
-	m_graphics_controller.draw_bind_pipeline(m_depth_copy_pipeline.pipeline);
-	m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);
-	m_graphics_controller.draw_bind_index_buffer(m_square.index_buffer, m_square.index_type);
-	m_graphics_controller.draw_bind_uniform_sets(m_depth_copy_pipeline.pipeline, 0, &m_depth_copy_pipeline.uniform_set_0, 1);
-	m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
-
-	m_graphics_controller.draw_end();
-
-
 	// Composision pass
 	std::array<ClearValue, 1> composition_clear_values{};
 	composition_clear_values[0].color = { 0.0f, 1.0f, 1.0f, 1.0f };
@@ -1004,47 +899,6 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	}
 
 	m_graphics_controller.draw_end();
-
-	//// Generate Shadow map
-	//ClearValue shadow_map_clear_value{ .depth_stencil = { 1.0f, 0 } };
-	//m_graphics_controller.draw_begin(m_shadow_map_target.framebuffer, &shadow_map_clear_value, 1);
-	//
-	//m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_shadow_map_target.image_infos[0].width, (float)m_shadow_map_target.image_infos[0].height, 0.0f, 1.0f);
-	//m_graphics_controller.draw_set_scissor(0, 0, m_shadow_map_target.image_infos[0].width, m_shadow_map_target.image_infos[0].height);
-	//
-	//m_graphics_controller.draw_bind_pipeline(m_shadow_generation.pipeline);
-	//m_graphics_controller.draw_bind_uniform_sets(m_shadow_generation.pipeline, 0, &m_shadow_generation.shadow_gen_uniform_set_0, 1);
-	//for (MeshId mesh_id : m_draw_list.meshes) {
-	//	const Mesh& mesh = m_meshes[mesh_id];
-	//
-	//	m_graphics_controller.draw_bind_vertex_buffer(mesh.vertex_buffer);
-	//	m_graphics_controller.draw_bind_index_buffer(mesh.index_buffer, IndexType::Uint32);
-	//	m_graphics_controller.draw_bind_uniform_sets(m_shadow_generation.pipeline, 1, &mesh.shadow_gen_uniform_set_1, 1);
-	//	m_graphics_controller.draw_draw_indexed(mesh.index_count);
-	//}
-	//
-	//m_graphics_controller.draw_end();
-
-	//// Draw to offscreen buffer
-	//ClearValue offscreen_clear_values[2]{};
-	//offscreen_clear_values[0].color = { 0.9f, 0.7f, 0.8f, 1.0f };
-	//offscreen_clear_values[1].depth_stencil = { 1.0f, 0 };
-	//m_graphics_controller.draw_begin(m_offscreen_render_target.framebuffer, offscreen_clear_values, 2);
-	//
-	//m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_offscreen_render_target.image_infos[0].width, (float)m_offscreen_render_target.image_infos[0].height, 0.0f, 1.0f);
-	//m_graphics_controller.draw_set_scissor(0, 0, m_offscreen_render_target.image_infos[0].width, m_offscreen_render_target.image_infos[0].height);
-
-	//// Draw meshes
-	//m_graphics_controller.draw_bind_pipeline(m_mesh_common.pipeline);
-	//m_graphics_controller.draw_bind_uniform_sets(m_mesh_common.pipeline, 1, &m_mesh_common.draw_uniform_set_1, 1);
-	//for (MeshId mesh_id : m_draw_list.meshes) {
-	//	const Mesh& mesh = m_meshes[mesh_id];
-	//	
-	//	m_graphics_controller.draw_bind_vertex_buffer(mesh.vertex_buffer);
-	//	m_graphics_controller.draw_bind_index_buffer(mesh.index_buffer, IndexType::Uint32);
-	//	m_graphics_controller.draw_bind_uniform_sets(m_mesh_common.pipeline, 0, &mesh.draw_uniform_set_0, 1);
-	//	m_graphics_controller.draw_draw_indexed(mesh.index_count);
-	//}
 
 
 	// Present to screen pass

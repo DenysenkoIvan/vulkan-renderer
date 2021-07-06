@@ -87,11 +87,11 @@ static std::tuple<VkImageLayout, VkPipelineStageFlags, VkAccessFlags> image_usag
 
 		stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 		access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-	//} else if (usage & ImageUsageDepthStencilAttachmentReadOnly) {
-	//	layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-	//
-	//	stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-	//	access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+	} else if (usage & ImageUsageDepthStencilReadOnly) {
+		layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+	
+		stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 	//} else if (usage & ImageUsageSampled) {
 	//	layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	//
@@ -145,6 +145,9 @@ static std::pair<VkPipelineStageFlags, VkAccessFlags> image_layout_to_pipeline_s
 	} else if (layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
 		stages = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 		access = VK_ACCESS_MEMORY_READ_BIT;
+	} else if (layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+		stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 	} else if (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 		stages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
@@ -193,8 +196,8 @@ static VkImageLayout image_usage_to_optimal_image_layout(ImageUsageFlags usage) 
 		return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	if (usage & ImageUsageDepthStencilAttachment)
 		return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	//if (usage & ImageUsageDepthStencilAttachmentReadOnly)
-	//	return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+	if (usage & ImageUsageDepthStencilReadOnly)
+		return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 	//if (usage & ImageUsageSampled)
 	//	return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 	if (usage & ImageUsageColorSampled)
@@ -231,6 +234,8 @@ static VkImageUsageFlags image_usage_to_vk_image_usage(ImageUsageFlags usage) {
 		vk_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 	if (usage & ImageUsageColorSampled || usage & ImageUsageDepthSampled)
 		vk_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	if (usage & ImageUsageDepthStencilReadOnly)
+		vk_usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 	if (usage & ImageUsageTransferDst)
 		vk_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	if (usage & ImageUsageTransferSrc)
@@ -560,10 +565,10 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 		};
 
 		ImageUsageFlags usage = attachment.current_usage;
-		if (usage & ImageUsageColorAttachment)
-			color_attachments.push_back(reference);
-		else if (usage & ImageUsageDepthStencilAttachment)// || usage & ImageUsageDepthStencilAttachmentReadOnly)
+		if (format_has_depth((VkFormat)attachment.format))
 			depth_stencil_attachments.push_back(reference);
+		else
+			color_attachments.push_back(reference);
 
 		render_pass.attachments.emplace_back(attachment, prev_layout, next_layout);
 	}
@@ -616,11 +621,7 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 		
 		const Image& image = m_images[ids[i]];
 		
-		framebuffer.image_views.push_back(image_view_create(
-			image,
-			image.info.usage & ImageUsageColorAttachment
-			? ImageUsageColorAttachment
-			: ImageUsageDepthStencilAttachment));
+		framebuffer.image_views.push_back(image_view_create(image, image.info.usage));
 	}
 
 	VkFramebufferCreateInfo framebuffer_info{
@@ -1152,7 +1153,10 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 			for (size_t j = 0; j < uniform.id_count; j += 2) {
 				Image& image = m_images[uniform.ids[j]];
 
-				image_should_have_layout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				if (image.info.usage & ImageUsageDepthStencilReadOnly)
+					image_should_have_layout(image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+				else
+					image_should_have_layout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 				VkImageView view = image_view_create(image, uniform.image_usage);
 				image_views.push_back(view);
@@ -1391,6 +1395,11 @@ VkImageView VulkanGraphicsController::image_view_create(const Image& image, Imag
 
 		if (has_stencil)
 			aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+	} else if (image_usage & ImageUsageDepthStencilReadOnly) {
+		if (image_usage & ImageUsageDepthSampled)
+			aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
+		//if (image_usage & ImageUsageStelcilSampled)
+		//	aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
 	} else if (image_usage & ImageUsageColorSampled)
 		aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 	else if (image_usage & ImageUsageDepthSampled)

@@ -213,7 +213,6 @@ private:
 		ImageInfo normals_info;
 		ImageInfo emissive_info;
 		ImageInfo depth_stencil_info;
-		ImageInfo depth_info;
 		ImageInfo composition_info;
 
 		ImageId albedo;
@@ -221,7 +220,6 @@ private:
 		ImageId normals;
 		ImageId emissive;
 		ImageId depth_stencil;
-		ImageId depth;
 		ImageId composition;
 
 		RenderPassId g_pass;
@@ -232,11 +230,6 @@ private:
 		FramebufferId composition_framebuffer;
 		RenderPassId present_pass;
 		FramebufferId present_framebuffer;
-
-		//RenderPassId shadow_map_pass;
-		//FramebufferId shadow_map_framebuffer;
-		//RenderPassId ss_shadows_pass;
-		//FramebufferId ss_shadows_framebuffer;
 	} m_deferred;
 
 	struct GPipeline {
@@ -244,13 +237,6 @@ private:
 		PipelineId pipeline;
 		UniformSetId uniform_set_0;
 	} m_g_pipeline;
-
-	struct DepthCopyPipeline {
-		ShaderId shader;
-		PipelineId pipeline;
-		SamplerId sampler;
-		UniformSetId uniform_set_0;
-	} m_depth_copy_pipeline;
 
 	struct LightningPipeline {
 		ShaderId shader;

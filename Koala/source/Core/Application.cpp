@@ -454,7 +454,7 @@ Application::Application(const ApplicationProperties& props) {
 		.dir = glm::normalize(light_pos)
 	};
 
-	m_model = load_gltf_model("../assets/models/mando_helmet/scene.gltf");
+	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
 
 	int width = 0, height = 0;
 	std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);

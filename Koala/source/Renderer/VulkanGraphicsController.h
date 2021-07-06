@@ -28,8 +28,8 @@ enum ImageUsageFlagBits {
 	ImageUsageDepthSampled = 0x200000,
 	//ImageUsageStencliSampled = 0x400000,
 	ImageUsageColorAttachment = 0x10,
-	ImageUsageDepthStencilAttachment = 0x20
-	//ImageUsageDepthStencilAttachmentReadOnly = 0x4000
+	ImageUsageDepthStencilAttachment = 0x20,
+	ImageUsageDepthStencilReadOnly = 0x4000
 	//ImageUsageInputAttachment = 128,
 	//ImageUsageCPUVisible = 1048576
 };
@@ -189,8 +189,8 @@ struct StencilOpState {
 };
 
 struct DepthStencilState {
-	bool depth_test_enable = true;
-	bool depth_write_enable = true;
+	bool depth_test_enable = false;
+	bool depth_write_enable = false;
 	CompareOp depth_compare_op = CompareOp::LessOrEqual;
 	bool depth_bounds_test_enable = false;
 	bool stencil_test_enable = false;
