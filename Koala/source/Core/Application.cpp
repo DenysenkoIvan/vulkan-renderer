@@ -1,4 +1,5 @@
 #include "Application.h"
+#include <Profile.h>
 
 #include <stb_image/stb_image.h>
 #include <tiny_obj_loader/tiny_obj_loader.h>
@@ -214,6 +215,8 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 }
 
 Model Application::load_gltf_model(const std::filesystem::path& filename) {
+	MY_PROFILE_FUNCTION();
+
 	if (!std::filesystem::exists(filename))
 		throw std::runtime_error("GLTF file does not exist");
 
@@ -397,6 +400,8 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 }
 
 void Application::draw_node(const Node& node, const Model& model, const glm::mat4& matrix) {
+	MY_PROFILE_FUNCTION();
+
 	glm::mat4 new_matrix = matrix * node.local_matrix();
 
 	for (const Primitive& primitive : node.primitives) {
@@ -416,6 +421,8 @@ void Application::draw_node(const Node& node, const Model& model, const glm::mat
 }
 
 Application::Application(const ApplicationProperties& props) {
+	MY_PROFILE_FUNCTION();
+	
 	m_start_time_point = std::chrono::steady_clock::now();
 
 	WindowProperties window_props;
@@ -429,7 +436,7 @@ Application::Application(const ApplicationProperties& props) {
 	m_renderer.create(m_window.context());
 
 	float resolution_coef = 1.0f;
-	m_renderer.set_resolution(resolution_coef * 1280, resolution_coef * 720);
+	m_renderer.set_resolution((uint32_t)(resolution_coef * 1280), (uint32_t)(resolution_coef * 720));
 	
 	uint32_t shadow_map_resolution = 2048 * 1;
 	m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
@@ -444,7 +451,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_monitor_resolution = Window::get_monitor_resolution();
 	m_camera.aspect_ratio = (float)m_monitor_resolution.width / m_monitor_resolution.height;
-	m_camera.near = 0.1f;
+	m_camera.near = 0.01f;
 	m_camera.far = 10'000.0f;
 
 	glm::vec3 light_pos{ 5.0f, 15.0f, 5.0f };
@@ -475,6 +482,8 @@ Application::~Application() {
 }
 
 void Application::on_event(const Event& e) {
+	MY_PROFILE_FUNCTION();
+
 	if (e.type == EventType::Application) {
 		const ApplicationEvent& event = e.application;
 
@@ -523,6 +532,8 @@ void Application::on_event(const Event& e) {
 }
 
 void Application::run() {
+	MY_PROFILE_FUNCTION();
+
 	while (m_running) {
 		m_window.on_update();
 
@@ -546,6 +557,8 @@ void Application::on_mouse_move(const MouseMovedEvent& e) {
 }
 
 void Application::on_update() {
+	MY_PROFILE_FUNCTION();
+
 	auto current_time = std::chrono::high_resolution_clock::now();
 	double time = std::chrono::duration<double, std::chrono::seconds::period>(current_time - m_start_time_point).count();
 
@@ -577,6 +590,8 @@ void Application::on_update() {
 }
 
 void Application::on_render() {
+	MY_PROFILE_FUNCTION();
+
 	m_renderer.begin_frame(m_camera, m_directional_light, nullptr, 0);
 
 	for (const auto& node : m_model.nodes)

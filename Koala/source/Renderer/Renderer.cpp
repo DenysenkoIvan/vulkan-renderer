@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include <Profile.h>
 
 #include <filesystem>
 #include <fstream>
@@ -70,6 +71,8 @@ static SamplerAddressMode wrap_to_sampler_address_mode(Wrap wrap) {
 }
 
 void Renderer::create(VulkanContext* context) {
+	MY_PROFILE_FUNCTION();
+
 	m_graphics_controller.create(context);
 
 	// Create empty texture
@@ -197,8 +200,6 @@ void Renderer::create(VulkanContext* context) {
 
 		m_deferred.composition_pass = m_graphics_controller.render_pass_create(composition_attachments.data(), (uint32_t)composition_attachments.size());
 	}
-
-	{}
 
 	// Create G pipeline
 	{
@@ -527,6 +528,53 @@ void Renderer::create(VulkanContext* context) {
 		m_present_pipeline.pipeline = m_graphics_controller.pipeline_create(present_pipeline_info);
 	}
 
+	// Create generate cubemap pipeline
+	{
+		RenderPassAttachment gen_cubemap_attachment{
+			.previous_usage = 0,
+			.current_usage = ImageUsageColorAttachment,
+			.next_usage = ImageUsageColorSampled,
+			.format = Format::RGBA32_SFloat,
+			.initial_action = InitialAction::Clear,
+			.final_action = FinalAction::Store
+		};
+
+		m_gen_cubemap_pipeline.render_pass = m_graphics_controller.render_pass_create(&gen_cubemap_attachment, 1);
+
+		auto vert_spv = load_spv("../assets/shaders/equirect_to_cubemap.vert.spv");
+		auto frag_spv = load_spv("../assets/shaders/equirect_to_cubemap.frag.spv");
+
+		std::array<ShaderStage, 2> shader_stages;
+		shader_stages[0] = {
+			.stage = ShaderStageVertex,
+			.spv = vert_spv.data(),
+			.spv_size = vert_spv.size()
+		};
+		shader_stages[1] = {
+			.stage = ShaderStageFragment,
+			.spv = frag_spv.data(),
+			.spv_size = frag_spv.size()
+		};
+
+		m_gen_cubemap_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
+
+		ColorBlendAttachmentState blend_attachment;
+		blend_attachment.blend_enable = false;
+		blend_attachment.color_write_mask = ColorComponentR | ColorComponentG | ColorComponentB | ColorComponentA;
+
+		std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_VIEWPORT };
+
+		PipelineInfo gen_cubemap_pi{};
+		gen_cubemap_pi.shader_id = m_g_pipeline.shader;
+		gen_cubemap_pi.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
+		gen_cubemap_pi.dynamic_states.dynamic_states = dynamic_states.data();
+		gen_cubemap_pi.color_blend.attachment_count = 1;
+		gen_cubemap_pi.color_blend.attachments = &blend_attachment;
+		gen_cubemap_pi.render_pass_id = m_gen_cubemap_pipeline.render_pass;
+
+		m_gen_cubemap_pipeline.pipeline = m_graphics_controller.pipeline_create(gen_cubemap_pi);
+	}
+
 	// Create default shapes
 	{ // Square
 		float vertices[4 * 4] = {
@@ -606,6 +654,8 @@ void Renderer::create(VulkanContext* context) {
 }
 
 void Renderer::destroy() {
+	MY_PROFILE_FUNCTION();
+
 	m_graphics_controller.destroy();
 }
 
@@ -718,6 +768,8 @@ void Renderer::set_post_effect_constants(float exposure, float gamma) {
 }
 
 void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights, uint32_t light_count) {
+	MY_PROFILE_FUNCTION();
+
 	m_scene_info.data.camera = camera;
 	m_scene_info.data.light_info.light_dir = dir_light.dir;
 	m_scene_info.data.light_info.light_color = dir_light.color;
@@ -762,6 +814,8 @@ void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights,
 }
 
 void Renderer::end_frame(uint32_t width, uint32_t height) {
+	MY_PROFILE_FUNCTION();
+
 	std::sort(m_draw_list.opaque_primitives.begin(), m_draw_list.opaque_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
 		return primitive1.material < primitive2.material;
 		});
@@ -940,6 +994,8 @@ void Renderer::draw_primitive(const glm::mat4& model, size_t vertex_buffer, size
 }
 
 MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count) {
+	MY_PROFILE_FUNCTION();
+
 	MaterialId first_material_offset = (uint32_t)m_materials.size();
 
 	std::vector<ImageId> image_ids;
@@ -1051,12 +1107,16 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 }
 
 VertexBufferId Renderer::vertex_buffer_create(const Vertex* data, size_t count) {
+	MY_PROFILE_FUNCTION();
+
 	m_vertex_buffers.push_back(m_graphics_controller.vertex_buffer_create(data, count * sizeof(Vertex)));
 
 	return m_vertex_buffers.size() - 1;
 }
 
 IndexBufferId Renderer::index_buffer_create(const uint32_t* data, size_t count) {
+	MY_PROFILE_FUNCTION(); 
+	
 	m_index_buffers.push_back(m_graphics_controller.index_buffer_create(data, count * 4, IndexType::Uint32));
 
 	return m_index_buffers.size() - 1;

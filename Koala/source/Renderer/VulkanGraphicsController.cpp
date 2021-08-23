@@ -1,4 +1,5 @@
 #include "VulkanGraphicsController.h"
+#include <Profile.h>
 
 #include <spirv_reflect.h>
 
@@ -245,6 +246,8 @@ static VkImageUsageFlags image_usage_to_vk_image_usage(ImageUsageFlags usage) {
 }
 
 void VulkanGraphicsController::create(VulkanContext* context) {
+	MY_PROFILE_FUNCTION();
+
 	m_context = context;
 
 	uint32_t frame_count = m_context->swapchain_image_count() + 1;
@@ -289,6 +292,8 @@ void VulkanGraphicsController::create(VulkanContext* context) {
 }
 
 void VulkanGraphicsController::destroy() {
+	MY_PROFILE_FUNCTION();
+
 	m_context->sync();
 
 	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
@@ -318,9 +323,6 @@ void VulkanGraphicsController::destroy() {
 
 		for (StageInfo& stage_info : shader.stages)
 			vkDestroyShaderModule(device, stage_info.module, nullptr);
-
-		//vkDestroyShaderModule(device, info.vertex_module, nullptr);
-		//vkDestroyShaderModule(device, info.fragment_module, nullptr);
 
 		vkDestroyPipelineLayout(device, shader.pipeline_layout, nullptr);
 	}
@@ -353,6 +355,8 @@ void VulkanGraphicsController::destroy() {
 }
 
 void VulkanGraphicsController::end_frame() {
+	MY_PROFILE_FUNCTION();
+
 	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
 	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
 
@@ -642,6 +646,8 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 }
 
 ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, RenderId stage_count) {
+	MY_PROFILE_FUNCTION(); 
+	
 	m_shaders.push_back({});
 	Shader& shader = m_shaders.back();
 	
@@ -817,6 +823,8 @@ ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, Rend
 }
 
 PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipeline_info) {
+	MY_PROFILE_FUNCTION(); 
+	
 	m_pipelines.push_back({});
 	Pipeline& pipeline = m_pipelines.back();
 	pipeline.info = pipeline_info;
@@ -933,7 +941,6 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 		.pRasterizationState = &rasterization_state,
 		.pMultisampleState = &multisample_state,
 		.pDepthStencilState = &depth_stencil_state,
-		// TODO: color blend state support
 		.pColorBlendState = &color_blend_state,
 		.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
@@ -950,6 +957,8 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 }
 
 BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t size) {
+	MY_PROFILE_FUNCTION(); 
+	
 	Buffer buffer{
 		.size = size,
 		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -967,6 +976,8 @@ BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t
 }
 
 BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t size, IndexType index_type) {
+	MY_PROFILE_FUNCTION(); 
+	
 	Buffer buffer{
 		.size = size,
 		.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT
@@ -986,6 +997,8 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 }
 
 BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_t size) {
+	MY_PROFILE_FUNCTION(); 
+	
 	Buffer buffer{
 		.size = size,
 		.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
@@ -1004,6 +1017,8 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 }
 
 void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
+	MY_PROFILE_FUNCTION(); 
+	
 	Buffer& buffer = m_buffers[buffer_id];
 
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
@@ -1014,6 +1029,8 @@ void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* dat
 }
 
 ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
+	MY_PROFILE_FUNCTION(); 
+	
 	VkFormat vk_format = (VkFormat)info.format;
 	VkDeviceSize size = vk_format_to_size(vk_format) * info.width * info.height * info.depth * info.layer_count;
 
@@ -1043,6 +1060,8 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 }
 
 void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInfo& image_data_info) {
+	MY_PROFILE_FUNCTION(); 
+	
 	const Image& image = m_images[image_id];
 	const ImageInfo& image_info = image.info;
 
@@ -1088,6 +1107,8 @@ void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInf
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
+	MY_PROFILE_FUNCTION(); 
+	
 	VkSamplerCreateInfo sampler_info{
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.magFilter = (VkFilter)info.mag_filter,
@@ -1120,6 +1141,8 @@ SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
 }
 
 UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const UniformInfo* uniforms, size_t uniform_count) {
+	MY_PROFILE_FUNCTION(); 
+	
 	SetInfo& set = *m_shaders[shader_id].find_set(set_idx);
 
 	std::vector<ImageId> images;

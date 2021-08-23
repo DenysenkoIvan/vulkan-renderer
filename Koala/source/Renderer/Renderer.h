@@ -275,6 +275,13 @@ private:
 		UniformSetId uniform_set_0;
 	} m_present_pipeline;
 
+	struct GenerateCubemapPipeline {
+		RenderPassId render_pass;
+		ShaderId shader;
+		PipelineId pipeline;
+		BufferId views;
+	} m_gen_cubemap_pipeline;
+
 	// Skybox
 	struct Skybox {
 		ImageId image;

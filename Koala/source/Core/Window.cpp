@@ -2,6 +2,7 @@
 #include <Event/ApplicationEvent.h>
 #include <Event/KeyboardEvent.h>
 #include <Event/MouseEvent.h>
+#include <Profile.h>
 
 // TODO: Refactor
 #include <Renderer/VulkanContext.h>
@@ -9,7 +10,9 @@
 int Window::s_windows_created_count = 0;
 
 Window::~Window() {
-	terminate_window();
+	MY_PROFILE_FUNCTION();
+
+	glfwDestroyWindow(m_window);
 
 	s_windows_created_count--;
 	if (s_windows_created_count == 0)
@@ -33,6 +36,8 @@ bool Window::is_minimized() {
 }
 
 void Window::initialize(const WindowProperties& window_props) {
+	MY_PROFILE_FUNCTION();
+
 	if (s_windows_created_count == 0) {
 		init_glfw();
 		s_windows_created_count++;
@@ -45,10 +50,14 @@ void Window::initialize(const WindowProperties& window_props) {
 }
 
 void Window::on_update() {
+	MY_PROFILE_FUNCTION();
+
 	glfwPollEvents();
 }
 
 void Window::init_window(const WindowProperties& window_props) {
+	MY_PROFILE_FUNCTION();
+
 	m_window_info.width = window_props.width;
 	m_window_info.height = window_props.height;
 
@@ -166,11 +175,9 @@ void Window::init_window(const WindowProperties& window_props) {
 	});
 }
 
-void Window::terminate_window() {
-	glfwDestroyWindow(m_window);
-}
-
 void Window::init_glfw() {
+	MY_PROFILE_FUNCTION();
+
 	glfwInit();
 
 	glfwSetErrorCallback([](int error_code, const char* description) {
@@ -180,5 +187,7 @@ void Window::init_glfw() {
 }
 
 void Window::terminate_glfw() {
+	MY_PROFILE_FUNCTION();
+
 	glfwTerminate();
 }

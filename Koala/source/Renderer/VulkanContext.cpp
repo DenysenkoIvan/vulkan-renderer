@@ -1,4 +1,5 @@
 #include "VulkanContext.h"
+#include <Profile.h>
 
 #include <array>
 // TODO: Delete this line
@@ -6,6 +7,8 @@
 #include <stdexcept>
 
 void VulkanContext::create(GLFWwindow* window) {
+	MY_PROFILE_FUNCTION();
+
 	init_extensions();
 	create_instance();
 
@@ -22,6 +25,8 @@ void VulkanContext::create(GLFWwindow* window) {
 }
 
 void VulkanContext::destroy() {
+	MY_PROFILE_FUNCTION();
+
 	stop_rendering();
 	
 	cleanup_swapchain();
@@ -40,6 +45,8 @@ void VulkanContext::destroy() {
 }
 
 void VulkanContext::resize(uint32_t width, uint32_t height) {
+	MY_PROFILE_FUNCTION();
+
 	stop_rendering();
 
 	cleanup_swapchain();
@@ -54,6 +61,8 @@ void VulkanContext::sync() {
 }
 
 void VulkanContext::swap_buffers(VkCommandBuffer setup_buffer, VkCommandBuffer draw_buffer) {
+	MY_PROFILE_FUNCTION();
+
 	// Submit command buffers
 	VkSubmitInfo setup_submit{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -124,6 +133,7 @@ void VulkanContext::init_extensions() {
 	}
 
 	m_physical_device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+	m_physical_device_extensions.push_back(VK_KHR_MULTIVIEW_EXTENSION_NAME);
 }
 
 void VulkanContext::create_instance() {
@@ -362,6 +372,8 @@ void VulkanContext::create_device() {
 }
 
 void VulkanContext::create_swapchain() {
+	MY_PROFILE_FUNCTION();
+
 	VkSurfaceCapabilitiesKHR surface_capabilities;
 	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physical_device, m_surface, &surface_capabilities);
 
@@ -517,6 +529,8 @@ void VulkanContext::create_swapchain() {
 }
 
 void VulkanContext::cleanup_swapchain() {
+	MY_PROFILE_FUNCTION();
+
 	for (VkFramebuffer framebuffer : m_swapchain_framebuffers)
 		vkDestroyFramebuffer(m_device, framebuffer, nullptr);
 	m_swapchain_framebuffers.clear();
@@ -532,6 +546,8 @@ void VulkanContext::cleanup_swapchain() {
 }
 
 void VulkanContext::start_rendering() {
+	MY_PROFILE_FUNCTION();
+
 	VkSemaphoreCreateInfo semaphore_info{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
 	};
@@ -554,6 +570,8 @@ void VulkanContext::start_rendering() {
 }
 
 void VulkanContext::prepare_rendering() {
+	MY_PROFILE_FUNCTION();
+
 	vkWaitForFences(m_device, 1, &m_draw_complete_fences[m_frame_index], VK_TRUE, UINT64_MAX);
 	vkResetFences(m_device, 1, &m_draw_complete_fences[m_frame_index]);
 
@@ -561,6 +579,8 @@ void VulkanContext::prepare_rendering() {
 }
 
 void VulkanContext::stop_rendering() {
+	MY_PROFILE_FUNCTION();
+
 	vkDeviceWaitIdle(m_device);
 
 	for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {

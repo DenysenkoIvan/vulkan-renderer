@@ -550,7 +550,6 @@ private:
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
 	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
 	void vulkan_copy_buffer_to_image(VkImage image, StagingBuffer staging_buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count);
-	//void vulkan_change_image_format(VkImage src_image, VkImageLayout src_layout, VkImage dst_image, VkImageLayout dst_layout, VkFilter filter);
 	void image_should_have_layout(Image& image, VkImageLayout layout);
 	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
 	

@@ -11,3 +11,5 @@ glslc present.frag -o present.frag.spv
 glslc skybox.vert -o skybox.vert.spv
 glslc skybox.frag -o skybox.frag.spv
 glslc shadow_map.vert -o shadow_map.vert.spv
+glslc equirect_to_cubemap.vert -o equirect_to_cubemap.vert.spv
+glslc equirect_to_cubemap.frag -o equirect_to_cubemap.frag.spv

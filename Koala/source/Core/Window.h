@@ -43,8 +43,7 @@ public:
 
 private:
 	void init_window(const WindowProperties& window_props);
-	void terminate_window();
-
+	
 private:
 	static void init_glfw();
 	static void terminate_glfw();
