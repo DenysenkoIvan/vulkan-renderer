@@ -27,7 +27,7 @@ private:
 #if defined(PROFILE_ENABLE)
 #define MY_PROFILE_START(name) CPUProfiler::start_session(name);
 #else
-#define MY_ROFILE_START(name)
+#define MY_PROFILE_START(name)
 #endif
 
 #if defined(PROFILE_ENABLE)
@@ -40,4 +40,10 @@ private:
 #define MY_PROFILE_FUNCTION() CPUProfiler cpu_profiler##__LINE__(__FUNCSIG__);
 #else
 #define MY_PROFILE_FUNCTION()
+#endif
+
+#if defined(PROFILE_ENABLE)
+#define MY_PROFILE_SCOPE(name) CPUProfiler cpu_profiler##__LINE__(name);
+#else
+#define MY_PROFILE_SCOPE(name)
 #endif

@@ -1,6 +1,8 @@
 #include "Renderer.h"
 #include <Profile.h>
 
+// TODO: Logging
+#include <iostream>
 #include <filesystem>
 #include <fstream>
 
@@ -539,7 +541,7 @@ void Renderer::create(VulkanContext* context) {
 			.final_action = FinalAction::Store
 		};
 
-		m_gen_cubemap_pipeline.render_pass = m_graphics_controller.render_pass_create(&gen_cubemap_attachment, 1);
+		//m_gen_cubemap_pipeline.render_pass = m_graphics_controller.render_pass_create(&gen_cubemap_attachment, 1);
 
 		auto vert_spv = load_spv("../assets/shaders/equirect_to_cubemap.vert.spv");
 		auto frag_spv = load_spv("../assets/shaders/equirect_to_cubemap.frag.spv");
@@ -556,7 +558,7 @@ void Renderer::create(VulkanContext* context) {
 			.spv_size = frag_spv.size()
 		};
 
-		m_gen_cubemap_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
+		//m_gen_cubemap_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
 
 		ColorBlendAttachmentState blend_attachment;
 		blend_attachment.blend_enable = false;
@@ -572,7 +574,7 @@ void Renderer::create(VulkanContext* context) {
 		gen_cubemap_pi.color_blend.attachments = &blend_attachment;
 		gen_cubemap_pi.render_pass_id = m_gen_cubemap_pipeline.render_pass;
 
-		m_gen_cubemap_pipeline.pipeline = m_graphics_controller.pipeline_create(gen_cubemap_pi);
+		//m_gen_cubemap_pipeline.pipeline = m_graphics_controller.pipeline_create(gen_cubemap_pi);
 	}
 
 	// Create default shapes
@@ -725,7 +727,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	light_set_0_bindings[4].binding = 4;
 	light_set_0_bindings[4].ids = depth_ids;
 	light_set_0_bindings[4].id_count = 2;
-	
+
 	m_light_pipeline.uniform_set_0 = m_graphics_controller.uniform_set_create(m_light_pipeline.shader, 0, light_set_0_bindings.data(), (uint32_t)light_set_0_bindings.size());
 
 	// Composition
@@ -816,35 +818,50 @@ void Renderer::begin_frame(const Camera& camera, Light dir_light, Light* lights,
 void Renderer::end_frame(uint32_t width, uint32_t height) {
 	MY_PROFILE_FUNCTION();
 
-	std::sort(m_draw_list.opaque_primitives.begin(), m_draw_list.opaque_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
-		return primitive1.material < primitive2.material;
-		});
+	{
+		MY_PROFILE_SCOPE("Render list sorting");
+	
+		std::sort(m_draw_list.opaque_primitives.begin(), m_draw_list.opaque_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
+			return primitive1.material < primitive2.material;
+			});
 
-	std::sort(m_draw_list.blend_primitives.begin(), m_draw_list.blend_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
-		return primitive1.material < primitive2.material;
-		});
+		std::sort(m_draw_list.blend_primitives.begin(), m_draw_list.blend_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
+			return primitive1.material < primitive2.material;
+			});
+	}
 
-	// G pass
-	std::array<ClearValue, 5> g_buffer_clear_values{};
-	g_buffer_clear_values[0].color = { 0.8f, 0.3f, 0.4f, 1.0f }; // albedo
-	g_buffer_clear_values[1].color = { 0.0f, 0.0f, 0.0f, 0.0f }; // ao-rough-met
-	g_buffer_clear_values[2].color = { 0.0f, 0.0f, 0.0f, 0.0f }; // normals
-	g_buffer_clear_values[3].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-	g_buffer_clear_values[4].depth_stencil = { 1.0f, 0 }; // depth-stencil
+	uint64_t timestamps[2] = { 0 };
+	bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
+	if (timestamps_are_available)
+		std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
 
-	m_graphics_controller.draw_begin(m_deferred.g_framebuffer, g_buffer_clear_values.data(), (uint32_t)g_buffer_clear_values.size());
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.albedo_info.width, (float)m_deferred.albedo_info.height, 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.albedo_info.width, m_deferred.albedo_info.height);
+	m_graphics_controller.timestamp_query_begin();
+	m_graphics_controller.timestamp_query_write_timestamp();
 
 	uint32_t stencil_reference = 0x28;
-	m_graphics_controller.draw_bind_pipeline(m_g_pipeline.pipeline);
-	m_graphics_controller.draw_bind_uniform_sets(m_g_pipeline.pipeline, 0, &m_g_pipeline.uniform_set_0, 1);
-	m_graphics_controller.draw_set_stencil_reference(StencilFaces::FrontAndBack, stencil_reference);
+	{
+		MY_PROFILE_SCOPE("G pass recording");
 
-	MaterialId prev_material = -1;
-	BufferId prev_vertex_buffer = -1;
-	BufferId prev_index_buffer = -1;
-	for (const Primitive& primitive : m_draw_list.opaque_primitives) {
+		// G pass
+		std::array<ClearValue, 5> g_buffer_clear_values{};
+		g_buffer_clear_values[0].color = { 0.8f, 0.3f, 0.4f, 1.0f }; // albedo
+		g_buffer_clear_values[1].color = { 0.0f, 0.0f, 0.0f, 0.0f }; // ao-rough-met
+		g_buffer_clear_values[2].color = { 0.0f, 0.0f, 0.0f, 0.0f }; // normals
+		g_buffer_clear_values[3].color = { 0.0f, 0.0f, 0.0f, 0.0f };
+		g_buffer_clear_values[4].depth_stencil = { 1.0f, 0 }; // depth-stencil
+
+		m_graphics_controller.draw_begin(m_deferred.g_framebuffer, g_buffer_clear_values.data(), (uint32_t)g_buffer_clear_values.size());
+		m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.albedo_info.width, (float)m_deferred.albedo_info.height, 0.0f, 1.0f);
+		m_graphics_controller.draw_set_scissor(0, 0, m_deferred.albedo_info.width, m_deferred.albedo_info.height);
+
+		m_graphics_controller.draw_bind_pipeline(m_g_pipeline.pipeline);
+		m_graphics_controller.draw_bind_uniform_sets(m_g_pipeline.pipeline, 0, &m_g_pipeline.uniform_set_0, 1);
+		m_graphics_controller.draw_set_stencil_reference(StencilFaces::FrontAndBack, stencil_reference);
+
+		MaterialId prev_material = -1;
+		BufferId prev_vertex_buffer = -1;
+		BufferId prev_index_buffer = -1;
+		for (const Primitive& primitive : m_draw_list.opaque_primitives) {
 		// If material changed, bind new material
 		if (primitive.material != prev_material) {
 			const Material& material = m_materials[primitive.material];
@@ -870,7 +887,8 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 		prev_vertex_buffer = primitive.vertex_buffer;
 	}
 
-	m_graphics_controller.draw_end();
+		m_graphics_controller.draw_end();
+	}
 
 	// Composision pass
 	std::array<ClearValue, 1> composition_clear_values{};
@@ -880,24 +898,28 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.composition_info.width, (float)m_deferred.composition_info.height, 0.0f, 1.0f);
 	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.composition_info.width, m_deferred.composition_info.height);
 
-	// Lightning
-	glm::mat4 view = m_scene_info.data.camera.view_matrix();
-	glm::mat4 proj = m_scene_info.data.camera.proj_matrix();
-	glm::mat4 view_inv = glm::inverse(view);
-	glm::mat4 proj_inv = glm::inverse(proj);
-	glm::mat4 view_proj_inv = view_inv * proj_inv;
+	{
+		MY_PROFILE_SCOPE("Lightning recording");
 
-	uint8_t push_constants_data[sizeof(glm::mat4) + sizeof(LightInfo)];
-	memcpy(push_constants_data, &view_proj_inv, sizeof(glm::mat4));
-	memcpy(push_constants_data + sizeof(glm::mat4), &m_scene_info.data.light_info, sizeof(LightInfo));
+		// Lightning
+		glm::mat4 view = m_scene_info.data.camera.view_matrix();
+		glm::mat4 proj = m_scene_info.data.camera.proj_matrix();
+		glm::mat4 view_inv = glm::inverse(view);
+		glm::mat4 proj_inv = glm::inverse(proj);
+		glm::mat4 view_proj_inv = view_inv * proj_inv;
 
-	m_graphics_controller.draw_bind_pipeline(m_light_pipeline.pipeline);
-	m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);
-	m_graphics_controller.draw_bind_index_buffer(m_square.index_buffer, m_square.index_type);
-	m_graphics_controller.draw_push_constants(m_light_pipeline.shader, ShaderStageFragment, 0, sizeof(push_constants_data), push_constants_data);
-	m_graphics_controller.draw_bind_uniform_sets(m_light_pipeline.pipeline, 0, &m_light_pipeline.uniform_set_0, 1);
-	m_graphics_controller.draw_set_stencil_reference(StencilFaces::FrontAndBack, stencil_reference);
-	m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
+		uint8_t push_constants_data[sizeof(glm::mat4) + sizeof(LightInfo)];
+		memcpy(push_constants_data, &view_proj_inv, sizeof(glm::mat4));
+		memcpy(push_constants_data + sizeof(glm::mat4), &m_scene_info.data.light_info, sizeof(LightInfo));
+
+		m_graphics_controller.draw_bind_pipeline(m_light_pipeline.pipeline);
+		m_graphics_controller.draw_bind_vertex_buffer(m_square.vertex_buffer);
+		m_graphics_controller.draw_bind_index_buffer(m_square.index_buffer, m_square.index_type);
+		m_graphics_controller.draw_push_constants(m_light_pipeline.shader, ShaderStageFragment, 0, sizeof(push_constants_data), push_constants_data);
+		m_graphics_controller.draw_bind_uniform_sets(m_light_pipeline.pipeline, 0, &m_light_pipeline.uniform_set_0, 1);
+		m_graphics_controller.draw_set_stencil_reference(StencilFaces::FrontAndBack, stencil_reference);
+		m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
+	}
 
 	// Draw skybox
 	if (m_draw_list.skybox.has_value()) {
@@ -919,37 +941,41 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	//m_graphics_controller.draw_set_line_width(3.0f);
 	//m_graphics_controller.draw_draw(6, 0);
 
-	// Blend primitives
-	m_graphics_controller.draw_bind_pipeline(m_blend_pipeline.pipeline);
-	m_graphics_controller.draw_bind_uniform_sets(m_blend_pipeline.pipeline, 0, &m_blend_pipeline.uniform_set_0, 1);
-	
-	prev_material = -1;
-	prev_vertex_buffer = -1;
-	prev_index_buffer = -1;
-	for (const Primitive& primitive : m_draw_list.blend_primitives) {
-		// If material changed, bind new material
-		if (primitive.material != prev_material) {
-			const Material& material = m_materials[primitive.material];
+	{
+		MY_PROFILE_SCOPE("Transparent pass recording");
 
-			m_graphics_controller.draw_push_constants(m_blend_pipeline.shader, ShaderStageFragment, sizeof(glm::mat4), sizeof(MaterialInfo), &material.info);
-			m_graphics_controller.draw_bind_uniform_sets(m_blend_pipeline.pipeline, 1, &material.uniform_set, 1);
+		// Blend primitives
+		m_graphics_controller.draw_bind_pipeline(m_blend_pipeline.pipeline);
+		m_graphics_controller.draw_bind_uniform_sets(m_blend_pipeline.pipeline, 0, &m_blend_pipeline.uniform_set_0, 1);
+
+		MaterialId prev_material = -1;
+		BufferId prev_vertex_buffer = -1;
+		BufferId prev_index_buffer = -1;
+		for (const Primitive& primitive : m_draw_list.blend_primitives) {
+			// If material changed, bind new material
+			if (primitive.material != prev_material) {
+				const Material& material = m_materials[primitive.material];
+
+				m_graphics_controller.draw_push_constants(m_blend_pipeline.shader, ShaderStageFragment, sizeof(glm::mat4), sizeof(MaterialInfo), &material.info);
+				m_graphics_controller.draw_bind_uniform_sets(m_blend_pipeline.pipeline, 1, &material.uniform_set, 1);
+			}
+			// If vertex buffer changed, bind new vertex buffer
+			if (primitive.vertex_buffer != prev_vertex_buffer)
+				m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffers[primitive.vertex_buffer]);
+			// If index buffer changed, bind new index buffer
+			if (primitive.index_buffer != prev_index_buffer)
+				m_graphics_controller.draw_bind_index_buffer(m_index_buffers[primitive.index_buffer], IndexType::Uint32);
+
+			m_graphics_controller.draw_push_constants(m_blend_pipeline.shader, ShaderStageVertex, 0, sizeof(glm::mat4), &primitive.model);
+
+			if (primitive.index_buffer != -1 && primitive.index_count != 0) {
+				m_graphics_controller.draw_draw_indexed((uint32_t)primitive.index_count, (uint32_t)primitive.first_index);
+				prev_index_buffer = primitive.index_buffer;
+			}
+
+			prev_material = primitive.material;
+			prev_vertex_buffer = primitive.vertex_buffer;
 		}
-		// If vertex buffer changed, bind new vertex buffer
-		if (primitive.vertex_buffer != prev_vertex_buffer)
-			m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffers[primitive.vertex_buffer]);
-		// If index buffer changed, bind new index buffer
-		if (primitive.index_buffer != prev_index_buffer)
-			m_graphics_controller.draw_bind_index_buffer(m_index_buffers[primitive.index_buffer], IndexType::Uint32);
-
-		m_graphics_controller.draw_push_constants(m_blend_pipeline.shader, ShaderStageVertex, 0, sizeof(glm::mat4), &primitive.model);
-
-		if (primitive.index_buffer != -1 && primitive.index_count != 0) {
-			m_graphics_controller.draw_draw_indexed((uint32_t)primitive.index_count, (uint32_t)primitive.first_index);
-			prev_index_buffer = primitive.index_buffer;
-		}
-
-		prev_material = primitive.material;
-		prev_vertex_buffer = primitive.vertex_buffer;
 	}
 
 	m_graphics_controller.draw_end();
@@ -972,6 +998,9 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	m_graphics_controller.draw_draw_indexed(m_square.index_count, 0);
 
 	m_graphics_controller.draw_end_for_screen();
+
+	m_graphics_controller.timestamp_query_write_timestamp();
+	m_graphics_controller.timestamp_query_end();
 
 	m_graphics_controller.end_frame();
 }
@@ -1115,8 +1144,8 @@ VertexBufferId Renderer::vertex_buffer_create(const Vertex* data, size_t count) 
 }
 
 IndexBufferId Renderer::index_buffer_create(const uint32_t* data, size_t count) {
-	MY_PROFILE_FUNCTION(); 
-	
+	MY_PROFILE_FUNCTION();
+
 	m_index_buffers.push_back(m_graphics_controller.index_buffer_create(data, count * 4, IndexType::Uint32));
 
 	return m_index_buffers.size() - 1;

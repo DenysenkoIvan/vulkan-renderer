@@ -10,6 +10,8 @@
 #include <vector>
 
 static std::vector<float> load_cube_map(std::string_view filename, int& width, int& height) {
+	MY_PROFILE_FUNCTION();
+
 	int channels = -1;
 	float* pixels = stbi_loadf(filename.data(), &width, &height, &channels, STBI_rgb_alpha);
 
@@ -535,6 +537,8 @@ void Application::run() {
 	MY_PROFILE_FUNCTION();
 
 	while (m_running) {
+		MY_PROFILE_SCOPE("Frame");
+
 		m_window.on_update();
 
 		on_update();

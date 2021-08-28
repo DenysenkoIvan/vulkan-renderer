@@ -427,6 +427,11 @@ public:
 
 	ScreenResolution screen_resolution() const;
 
+	void timestamp_query_begin();
+	void timestamp_query_end();
+	void timestamp_query_write_timestamp();
+	bool timestamp_query_get_results(uint64_t *data, uint32_t count);
+
 private:
 	struct RenderPassAttachmentInfo {
 		RenderPassAttachment attachment;
@@ -595,17 +600,26 @@ private:
 		VkDescriptorSet descriptor_set;
 	};
 
+	// Timestamp Query
+	struct TimestampQueryPool {
+		VkQueryPool pool;
+		std::array<uint64_t, 128> query_data;
+		uint32_t timestamps_written;
+	};
+
 private:
 	struct Frame {
 		VkCommandPool command_pool;
 		VkCommandBuffer setup_buffer;
 		VkCommandBuffer draw_buffer;
 		std::vector<StagingBuffer> staging_buffers;
+		TimestampQueryPool timestamp_query_pool;
 	};
 
 	VulkanContext* m_context;
 	std::vector<Frame> m_frames;
-	uint32_t m_frame_index;
+	size_t m_frame_index;
+	size_t m_frame_count;
 
 	std::vector<Shader> m_shaders;
 	std::vector<Pipeline> m_pipelines;

@@ -4,6 +4,8 @@
 #include <spirv_reflect.h>
 
 #include <algorithm>
+// TODO: Loggilg
+#include <iostream>
 #include <utility>
 #include <stdexcept>
 
@@ -281,6 +283,17 @@ void VulkanGraphicsController::create(VulkanContext* context) {
 			throw std::runtime_error("Failed to allocate command buffers");
 	}
 
+	VkQueryPoolCreateInfo query_pool_create_info{
+		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+		.queryType = VK_QUERY_TYPE_TIMESTAMP,
+		.queryCount = 64
+	};
+
+	for (uint32_t i = 0; i < frame_count; i++) {
+		if (vkCreateQueryPool(device, &query_pool_create_info, nullptr, &m_frames[i].timestamp_query_pool.pool) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create timestamp query pool");
+}
+
 	m_frame_index = 0;
 	VkCommandBufferBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -333,6 +346,8 @@ void VulkanGraphicsController::destroy() {
 	m_pipelines.clear();
 
 	for (Frame& frame : m_frames) {
+		vkDestroyQueryPool(device, frame.timestamp_query_pool.pool, nullptr);
+
 		vkDestroyCommandPool(device, frame.command_pool, nullptr);
 
 		for (StagingBuffer& buffer : frame.staging_buffers) {
@@ -363,6 +378,7 @@ void VulkanGraphicsController::end_frame() {
 	m_context->swap_buffers(m_frames[m_frame_index].setup_buffer, m_frames[m_frame_index].draw_buffer);
 
 	m_frame_index = (m_frame_index + 1) % m_frames.size();
+	m_frame_count++;
 
 	VkCommandBufferBeginInfo begin_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1270,6 +1286,56 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 
 ScreenResolution VulkanGraphicsController::screen_resolution() const {
 	return { m_context->swapchain_extent().width, m_context->swapchain_extent().height };
+}
+
+void VulkanGraphicsController::timestamp_query_begin() {
+	m_frames[m_frame_index].timestamp_query_pool.timestamps_written = 0;
+	
+	vkCmdResetQueryPool(m_frames[m_frame_index].setup_buffer, m_frames[m_frame_index].timestamp_query_pool.pool, 0, 64);
+}
+
+void VulkanGraphicsController::timestamp_query_end() {
+	vkGetQueryPoolResults(
+		m_context->device(),
+		m_frames[m_frame_index].timestamp_query_pool.pool,
+		0,
+		64,
+		128 * sizeof(uint64_t),
+		m_frames[m_frame_index].timestamp_query_pool.query_data.data(),
+		0,
+		VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT
+	);
+}
+
+void VulkanGraphicsController::timestamp_query_write_timestamp() {
+	if (m_frames[m_frame_index].timestamp_query_pool.timestamps_written >= 64) {
+		std::cout << "Warning: Writing more timestamps than 64\n";
+		return;
+	}
+
+	vkCmdWriteTimestamp(
+		m_frames[m_frame_index].draw_buffer,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		m_frames[m_frame_index].timestamp_query_pool.pool,
+		m_frames[m_frame_index].timestamp_query_pool.timestamps_written
+	);
+
+	m_frames[m_frame_index].timestamp_query_pool.timestamps_written++;
+}
+
+bool VulkanGraphicsController::timestamp_query_get_results(uint64_t* data, uint32_t count) {
+	if (m_frame_count < m_frames.size())
+		return false;
+
+	if (count > 64)
+		std::cout << "Warning: Quering timestamps more than max (64): " << count << '\n';
+
+	uint64_t multiplier = (uint64_t)m_context->physical_device_props().limits.timestampPeriod;
+
+	for (uint32_t i = 0; i < count; i++)
+		data[i] = m_frames[m_frame_index].timestamp_query_pool.query_data[i * 2] * multiplier;
+	
+	return true;
 }
 
 VkBuffer VulkanGraphicsController::buffer_create(VkBufferUsageFlags usage, VkDeviceSize size) {

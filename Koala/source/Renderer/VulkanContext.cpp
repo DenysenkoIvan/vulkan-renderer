@@ -28,7 +28,7 @@ void VulkanContext::destroy() {
 	MY_PROFILE_FUNCTION();
 
 	stop_rendering();
-	
+
 	cleanup_swapchain();
 	vkDestroyDevice(m_device, nullptr);
 
@@ -85,8 +85,12 @@ void VulkanContext::swap_buffers(VkCommandBuffer setup_buffer, VkCommandBuffer d
 
 	VkSubmitInfo submits[2] = { setup_submit, draw_submit };
 
-	vkResetFences(m_device, 1, &m_draw_complete_fences[m_frame_index]);
-	vkQueueSubmit(m_graphics_queue, 2, submits, m_draw_complete_fences[m_frame_index]);
+	{
+		MY_PROFILE_SCOPE("Submitting graphics commands");
+
+		vkResetFences(m_device, 1, &m_draw_complete_fences[m_frame_index]);
+		vkQueueSubmit(m_graphics_queue, 2, submits, m_draw_complete_fences[m_frame_index]);
+	}
 
 	// Present image
 	VkPresentInfoKHR present_info{
@@ -98,7 +102,11 @@ void VulkanContext::swap_buffers(VkCommandBuffer setup_buffer, VkCommandBuffer d
 		.pImageIndices = &m_image_index
 	};
 
-	vkQueuePresentKHR(m_present_queue, &present_info);
+	{
+		MY_PROFILE_SCOPE("Submitting to present queue");
+
+		vkQueuePresentKHR(m_present_queue, &present_info);
+	}
 
 	// Prepare new image
 	m_frame_index = (m_frame_index + 1) % FRAMES_IN_FLIGHT;
@@ -114,7 +122,7 @@ void VulkanContext::init_extensions() {
 
 	for (const VkExtensionProperties& extention : extensions_supported) {
 		const char* extension_name = extention.extensionName;
-		
+
 		if (!strcmp(VK_KHR_SURFACE_EXTENSION_NAME, extension_name))
 			m_instance_extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
 
@@ -124,7 +132,7 @@ void VulkanContext::init_extensions() {
 #else
 #error OS not supported
 #endif
-		
+
 #ifdef VULKAN_DEBUG
 		if (!strcmp(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, extension_name))
 			m_instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -133,7 +141,6 @@ void VulkanContext::init_extensions() {
 	}
 
 	m_physical_device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-	m_physical_device_extensions.push_back(VK_KHR_MULTIVIEW_EXTENSION_NAME);
 }
 
 void VulkanContext::create_instance() {
@@ -141,7 +148,7 @@ void VulkanContext::create_instance() {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pEngineName = "Koala",
 		.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-		.apiVersion = VK_API_VERSION_1_0
+		.apiVersion = VK_API_VERSION_1_1
 	};
 
 	std::array<const char*, 1> validation_layers = {
@@ -295,6 +302,9 @@ void VulkanContext::pick_physical_device() {
 
 	m_physical_device = most_suitable_device;
 
+	if (m_physical_device == VK_NULL_HANDLE)
+		throw std::runtime_error("Failed to find suitable physical device");
+
 	m_gpu_info = std::make_unique<PhysicalDeviceInfo>();
 	vkGetPhysicalDeviceProperties(m_physical_device, &m_gpu_info->properties);
 	vkGetPhysicalDeviceMemoryProperties(m_physical_device, &m_gpu_info->memory_properties);
@@ -310,9 +320,9 @@ void VulkanContext::pick_physical_device() {
 	uint32_t graphics_queue_index = ~0;
 	uint32_t present_queue_index = ~0;
 	for (auto& family : family_properties) {
-		if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+		if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT && family.timestampValidBits)
 			graphics_queue_index = queue_index;
-		
+
 		VkBool32 has_surface_support = false;
 		vkGetPhysicalDeviceSurfaceSupportKHR(m_physical_device, queue_index, m_surface, &has_surface_support);
 
@@ -351,8 +361,14 @@ void VulkanContext::create_device() {
 		.samplerAnisotropy = VK_TRUE
 	};
 
+	VkPhysicalDeviceHostQueryResetFeatures host_query_reset_feature{
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+		.hostQueryReset = VK_TRUE
+	};
+
 	VkDeviceCreateInfo device_info{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pNext = &host_query_reset_feature,
 		.queueCreateInfoCount = queue_count,
 		.pQueueCreateInfos = queue_infos.data(),
 		.enabledExtensionCount = (uint32_t)m_physical_device_extensions.size(),
@@ -442,7 +458,7 @@ void VulkanContext::create_swapchain() {
 		.clipped = VK_TRUE,
 		.oldSwapchain = VK_NULL_HANDLE
 	};
-	
+
 	if (m_graphics_queue_index == m_present_queue_index) {
 		swapchain_info.queueFamilyIndexCount = 1;
 		swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -572,7 +588,11 @@ void VulkanContext::start_rendering() {
 void VulkanContext::prepare_rendering() {
 	MY_PROFILE_FUNCTION();
 
-	vkWaitForFences(m_device, 1, &m_draw_complete_fences[m_frame_index], VK_TRUE, UINT64_MAX);
+	{
+		MY_PROFILE_SCOPE("Waiting for fences");
+
+		vkWaitForFences(m_device, 1, &m_draw_complete_fences[m_frame_index], VK_TRUE, UINT64_MAX);
+	}
 	vkResetFences(m_device, 1, &m_draw_complete_fences[m_frame_index]);
 
 	vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_image_acquired_semaphores[m_frame_index], VK_NULL_HANDLE, &m_image_index);
@@ -598,8 +618,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debug_callback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 	VkDebugUtilsMessageTypeFlagsEXT messageType,
 	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-	void* pUserData)
-{
+	void* pUserData) {
 	// TODO: Error logging
 	std::cout << pCallbackData->pMessage << '\n';
 
