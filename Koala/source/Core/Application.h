@@ -93,6 +93,7 @@ private:
 	Camera m_camera;
 	Light m_directional_light;
 
+	bool m_draw_skybox = true;
 	SkyboxId m_skybox;
 	Model m_model;
 };

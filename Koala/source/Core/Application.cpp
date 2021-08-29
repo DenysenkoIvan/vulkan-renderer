@@ -42,7 +42,7 @@ static std::unique_ptr<uint8_t[]> rgb_to_rgba(const uint8_t* data, size_t texel_
 	std::unique_ptr<uint8_t[]> image = std::make_unique<uint8_t[]>(texel_count * 4);
 
 	for (size_t i = 0; i < texel_count; i += 3) {
-		image[i]     = data[i];
+		image[i] = data[i];
 		image[i + 1] = data[i + 1];
 		image[i + 2] = data[i + 2];
 		image[i + 3] = 255;
@@ -111,7 +111,7 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 		// Load vertex data
 		const tinygltf::Accessor& pos_accessor = gltf_model.accessors[gltf_primitive.attributes.find("POSITION")->second];
 		const tinygltf::BufferView& pos_view = gltf_model.bufferViews[pos_accessor.bufferView];
-		
+
 		vertex_count = pos_accessor.count;
 
 		int pos_byte_stride = pos_accessor.ByteStride(pos_view) ? pos_accessor.ByteStride(pos_view) / sizeof(float) : tinygltf::GetNumComponentsInType(TINYGLTF_TYPE_VEC3);
@@ -176,7 +176,7 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 			const tinygltf::Buffer& buffer = gltf_model.buffers[buffer_view.buffer];
 
 			const void* ptr = &(buffer.data[accessor.byteOffset + buffer_view.byteOffset]);
-			
+
 			index_count = accessor.count;
 
 			index_buffer.reserve(index_buffer.size() + index_count);
@@ -187,12 +187,14 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 				for (size_t index = 0; index < index_count; index++)
 					index_buffer.push_back(buf[index] + vertex_start);
 			} break;
-			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+			{
 				const uint16_t* buf = (const uint16_t*)ptr;
 				for (size_t index = 0; index < index_count; index++)
 					index_buffer.push_back(buf[index] + vertex_start);
 			} break;
-			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+			case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+			{
 				const uint8_t* buf = (const uint8_t*)ptr;
 				for (size_t index = 0; index < index_count; index++)
 					index_buffer.push_back(buf[index] + vertex_start);
@@ -212,7 +214,7 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 
 		node->primitives.push_back(primitive);
 	}
-	
+
 	return node;
 }
 
@@ -235,10 +237,10 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 		std::cout << warn << '\n';
 
 	Model model;
-	
+
 	// Load images
 	std::vector<std::unique_ptr<uint8_t[]>> raw_images;
-	
+
 	std::vector<ImageSpecs> images;
 	images.reserve(gltf_model.images.size());
 
@@ -262,12 +264,12 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 
 		if (gltf_image.component < 3)
 			throw std::runtime_error("Image component < 3");
-		
+
 		if (gltf_image.component == 3) {
 			raw_images.push_back(rgb_to_rgba(gltf_image.image.data(), image.width * image.height));
 			image.data = raw_images.back().get();
 		}
-		
+
 		images.push_back(image);
 	}
 
@@ -288,7 +290,7 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 		.min_filter = MinFilter::LinearMipMapLinear,
 		.wrap_u = Wrap::Repeat,
 		.wrap_v = Wrap::Repeat
-	});
+		});
 
 	// Create texture. Texture = image + sampler
 	for (const auto& gltf_texture : gltf_model.textures) {
@@ -424,7 +426,7 @@ void Application::draw_node(const Node& node, const Model& model, const glm::mat
 
 Application::Application(const ApplicationProperties& props) {
 	MY_PROFILE_FUNCTION();
-	
+
 	m_start_time_point = std::chrono::steady_clock::now();
 
 	WindowProperties window_props;
@@ -439,7 +441,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	float resolution_coef = 1.0f;
 	m_renderer.set_resolution((uint32_t)(resolution_coef * 1280), (uint32_t)(resolution_coef * 720));
-	
+
 	uint32_t shadow_map_resolution = 2048 * 1;
 	m_renderer.set_shadow_map_resolution(shadow_map_resolution, shadow_map_resolution);
 
@@ -465,18 +467,23 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
 
-	int width = 0, height = 0;
-	std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);
-	
-	ImageSpecs skybox_texture{
-		.width = (uint32_t)width,
-		.height = (uint32_t)height,
-		.data = skybox_pixels.data(),
-		.data_format = Format::RGBA32_SFloat,
-		.desired_format = Format::RGBA16_SFloat
-	};
-	
-	m_skybox = m_renderer.skybox_create(skybox_texture);
+	m_draw_skybox = false;
+
+	if (m_draw_skybox) {
+
+		int width = 0, height = 0;
+		std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);
+
+		ImageSpecs skybox_texture{
+			.width = (uint32_t)width,
+			.height = (uint32_t)height,
+			.data = skybox_pixels.data(),
+			.data_format = Format::RGBA32_SFloat,
+			.desired_format = Format::RGBA16_SFloat
+		};
+
+		m_skybox = m_renderer.skybox_create(skybox_texture);
+	}
 }
 
 Application::~Application() {
@@ -577,7 +584,7 @@ void Application::on_update() {
 		m_camera.move_left(distance);
 	if (m_camera_movement & CameraMoveRight)
 		m_camera.move_left(-distance);
-		
+
 	float delta_mouse_x = (float)m_mouse_x - m_prev_mouse_x;
 	float delta_mouse_y = (float)m_mouse_y - m_prev_mouse_y;
 
@@ -601,7 +608,8 @@ void Application::on_render() {
 	for (const auto& node : m_model.nodes)
 		draw_node(*node, m_model, glm::mat4(1.0f));
 
-	m_renderer.draw_skybox(m_skybox);
+	if (m_draw_skybox)
+		m_renderer.draw_skybox(m_skybox);
 
 	m_renderer.end_frame(m_window.width(), m_window.height());
 }

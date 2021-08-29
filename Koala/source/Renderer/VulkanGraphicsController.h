@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 
@@ -405,25 +406,32 @@ public:
 	void draw_draw(uint32_t vertex_count, uint32_t first_vertex);
 
 	RenderPassId render_pass_create(const RenderPassAttachment* attachments, RenderId count);
+	void render_pass_destroy(RenderPassId render_pass_id);
 
 	FramebufferId framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count);
+	void framebuffer_destroy(FramebufferId framebuffer_id);
 
 	ShaderId shader_create(const ShaderStage* stages, RenderId stage_count);
-	
+	void shader_destroy(ShaderId shader_id);
+
 	PipelineId pipeline_create(const PipelineInfo& pipeline_info);
-	
+	void pipeline_destroy(PipelineId pipeline_id);
+
 	BufferId vertex_buffer_create(const void* data, size_t size);
 	BufferId index_buffer_create(const void* data, size_t size, IndexType index_type);
 	BufferId uniform_buffer_create(const void* data, size_t size);
-
 	void buffer_update(BufferId buffer_id, const void* data);
+	void buffer_destroy(BufferId buffer_id);
 
 	ImageId image_create(const ImageInfo& info);
 	void image_update(ImageId image_id, const ImageDataInfo& image_data_info);
+	void image_destroy(ImageId image_id);
 
 	SamplerId sampler_create(const SamplerInfo& info);
+	void sampler_destroy(SamplerId sampler_id);
 
 	UniformSetId uniform_set_create(ShaderId shader_id, uint32_t set_idx, const UniformInfo* uniforms, size_t uniform_count);
+	void uniform_set_destroy(UniformSetId uniform_set_id);
 
 	ScreenResolution screen_resolution() const;
 
@@ -444,8 +452,6 @@ private:
 		VkRenderPass render_pass;
 	};
 
-	std::vector<RenderPass> m_render_passes;
-
 	struct Framebuffer {
 		std::vector<ImageId> attachments;
 		std::vector<VkImageView> image_views;
@@ -454,8 +460,6 @@ private:
 		VkFramebuffer framebuffer = VK_NULL_HANDLE;
 		VkExtent2D extent;
 	};
-
-	std::vector<Framebuffer> m_framebuffers;
 
 	// Shader	
 	struct SetInfo {
@@ -568,7 +572,7 @@ private:
 
 	// Descriptor Pool
 	struct DescriptorPoolKey {
-		uint16_t uniform_type_counts[10];
+		uint8_t uniform_type_counts[10];
 
 		bool operator<(const DescriptorPoolKey& other) const {
 			return 0 > memcmp(uniform_type_counts, other.uniform_type_counts, sizeof(uniform_type_counts));
@@ -579,24 +583,24 @@ private:
 		}
 	};
 
-	static constexpr uint32_t MAX_SETS_PER_DESCRIPTOR_POOL = 64;
+	static constexpr size_t MAX_SETS_PER_DESCRIPTOR_POOL = 64;
 
 	struct DescriptorPool {
 		VkDescriptorPool pool;
-		uint32_t usage_count;
+		size_t usage_count;
 	};
 
-	uint32_t descriptor_pool_allocate(const DescriptorPoolKey& key);
-	void descriptor_pools_free();
+	size_t descriptor_pool_allocate(const DescriptorPoolKey& key);
+	void descriptor_pool_free(const DescriptorPoolKey& pool_key, RenderId pool_id);
 
 	// Uniform Set
 	struct UniformSet {
 		std::vector<ImageId> images; // Used to check out if image is in proper layout before descriptor binding operation
 		std::vector<VkImageView> image_views;
 		DescriptorPoolKey pool_key;
-		uint32_t pool_idx;
+		size_t pool_idx;
 		ShaderId shader;
-		uint32_t set_idx;
+		size_t set_idx;
 		VkDescriptorSet descriptor_set;
 	};
 
@@ -621,11 +625,14 @@ private:
 	size_t m_frame_index;
 	size_t m_frame_count;
 
-	std::vector<Shader> m_shaders;
-	std::vector<Pipeline> m_pipelines;
-	std::vector<Buffer> m_buffers;
-	std::vector<Image> m_images;
-	std::vector<Sampler> m_samplers;
-	std::map<DescriptorPoolKey, std::vector<DescriptorPool>> m_descriptor_pools;
-	std::vector<UniformSet> m_uniform_sets;
+	RenderId m_render_id;
+	std::unordered_map<RenderPassId, RenderPass> m_render_passes;
+	std::unordered_map<FramebufferId, Framebuffer> m_framebuffers;
+	std::unordered_map<ShaderId, Shader> m_shaders;
+	std::unordered_map<PipelineId, Pipeline> m_pipelines;
+	std::unordered_map<BufferId, Buffer> m_buffers;
+	std::unordered_map<ImageId, Image> m_images;
+	std::unordered_map<SamplerId, Sampler> m_samplers;
+	std::map<DescriptorPoolKey, std::unordered_map<RenderId, DescriptorPool>> m_descriptor_pools;
+	std::unordered_map<UniformSetId, UniformSet> m_uniform_sets;
 };

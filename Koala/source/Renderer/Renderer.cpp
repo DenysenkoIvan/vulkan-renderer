@@ -830,10 +830,10 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 			});
 	}
 
-	uint64_t timestamps[2] = { 0 };
-	bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
-	if (timestamps_are_available)
-		std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
+	//uint64_t timestamps[2] = { 0 };
+	//bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
+	//if (timestamps_are_available)
+	//	std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
 
 	m_graphics_controller.timestamp_query_begin();
 	m_graphics_controller.timestamp_query_write_timestamp();

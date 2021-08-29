@@ -314,35 +314,50 @@ void VulkanGraphicsController::destroy() {
 
 	VkDevice device = m_context->device();
 
-	for (Buffer& buffer : m_buffers) {
-		vkDestroyBuffer(device, buffer.buffer, nullptr);
-		vkFreeMemory(device, buffer.memory, nullptr);
+	for (auto& uniform_set : m_uniform_sets) {
+		VkDescriptorPool descriptor_pool =
+			m_descriptor_pools[uniform_set.second.pool_key][uniform_set.second.pool_idx].pool;
+
+		for (VkImageView image_view : uniform_set.second.image_views)
+			vkDestroyImageView(device, image_view, nullptr);
+		vkFreeDescriptorSets(device, descriptor_pool, 1, &uniform_set.second.descriptor_set);
+	}
+	m_uniform_sets.clear();
+	
+	for (auto& descriptor_pools : m_descriptor_pools) {
+		for (auto& pool : descriptor_pools.second)
+			vkDestroyDescriptorPool(device, pool.second.pool, nullptr);
+	}
+	m_descriptor_pools.clear();
+
+	for (auto& buffer : m_buffers) {
+		vkDestroyBuffer(device, buffer.second.buffer, nullptr);
+		vkFreeMemory(device, buffer.second.memory, nullptr);
 	}
 	m_buffers.clear();
 
-	for (Image& image : m_images) {
-		//vkDestroyImageView(device, image.view, nullptr);
-		vkDestroyImage(device, image.image, nullptr);
-		vkFreeMemory(device, image.memory, nullptr);
+	for (auto& image : m_images) {
+		vkDestroyImage(device, image.second.image, nullptr);
+		vkFreeMemory(device, image.second.memory, nullptr);
 	}
 	m_images.clear();
 
-	for (Sampler& sampler : m_samplers)
-		vkDestroySampler(device, sampler.sampler, nullptr);
+	for (auto& sampler : m_samplers)
+		vkDestroySampler(device, sampler.second.sampler, nullptr);
 
-	for (Shader& shader : m_shaders) {
-		for (VkDescriptorSetLayout set_layout : shader.set_layouts)
+	for (auto& shader : m_shaders) {
+		for (VkDescriptorSetLayout set_layout : shader.second.set_layouts)
 			vkDestroyDescriptorSetLayout(device, set_layout, nullptr);
 
-		for (StageInfo& stage_info : shader.stages)
+		for (StageInfo& stage_info : shader.second.stages)
 			vkDestroyShaderModule(device, stage_info.module, nullptr);
 
-		vkDestroyPipelineLayout(device, shader.pipeline_layout, nullptr);
+		vkDestroyPipelineLayout(device, shader.second.pipeline_layout, nullptr);
 	}
 	m_shaders.clear();
 
-	for (Pipeline& pipeline : m_pipelines)
-		vkDestroyPipeline(device, pipeline.pipeline, nullptr);
+	for (auto& pipeline : m_pipelines)
+		vkDestroyPipeline(device, pipeline.second.pipeline, nullptr);
 	m_pipelines.clear();
 
 	for (Frame& frame : m_frames) {
@@ -357,15 +372,15 @@ void VulkanGraphicsController::destroy() {
 	}
 	m_frames.clear();
 
-	for (Framebuffer& framebuffer : m_framebuffers) {
-		for (VkImageView view : framebuffer.image_views)
-			vkDestroyImageView(m_context->device(), view, nullptr);
-		vkDestroyFramebuffer(device, framebuffer.framebuffer, nullptr);
+	for (auto& framebuffer : m_framebuffers) {
+		for (VkImageView view : framebuffer.second.image_views)
+			vkDestroyImageView(device, view, nullptr);
+		vkDestroyFramebuffer(device, framebuffer.second.framebuffer, nullptr);
 	}
 	m_framebuffers.clear();
 
-	for (RenderPass& render_pass : m_render_passes)
-		vkDestroyRenderPass(device, render_pass.render_pass, nullptr);
+	for (auto& render_pass : m_render_passes)
+		vkDestroyRenderPass(device, render_pass.second.render_pass, nullptr);
 	m_render_passes.clear();
 }
 
@@ -618,8 +633,13 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 	if (vkCreateRenderPass(m_context->device(), &render_pass_info, nullptr, &render_pass.render_pass) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create framebuffer render pass");
 
-	m_render_passes.push_back(render_pass);
-	return (RenderPassId)m_render_passes.size() - 1;
+	m_render_passes[m_render_id] = std::move(render_pass);
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::render_pass_destroy(RenderPassId render_pass_id) {
+	vkDestroyRenderPass(m_context->device(), m_render_passes[render_pass_id].render_pass, nullptr);
+	m_render_passes.erase(render_pass_id);
 }
 
 FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count) {
@@ -657,15 +677,24 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 	if (vkCreateFramebuffer(m_context->device(), &framebuffer_info, nullptr, &framebuffer.framebuffer) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create framebuffer");
 
-	m_framebuffers.push_back(std::move(framebuffer));
-	return (FramebufferId)m_framebuffers.size() - 1;
+	m_framebuffers[m_render_id] = std::move(framebuffer);
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::framebuffer_destroy(FramebufferId framebuffer_id) {
+	Framebuffer& framebuffer = m_framebuffers[framebuffer_id];
+
+	for (VkImageView view : framebuffer.image_views)
+		vkDestroyImageView(m_context->device(), view, nullptr);
+	vkDestroyFramebuffer(m_context->device(), framebuffer.framebuffer, nullptr);
+	m_framebuffers.erase(framebuffer_id);
 }
 
 ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, RenderId stage_count) {
 	MY_PROFILE_FUNCTION(); 
 	
-	m_shaders.push_back({});
-	Shader& shader = m_shaders.back();
+	m_shaders[m_render_id] = {};
+	Shader& shader = m_shaders[m_render_id];
 	
 	auto reflect_shader_stage = [&, this](const void* spv, size_t size) {
 		spv_reflect::ShaderModule shader_module(size, spv);
@@ -835,14 +864,28 @@ ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, Rend
 	if (vkCreatePipelineLayout(m_context->device(), &pipeline_layout_info, nullptr, &shader.pipeline_layout) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create pipelien layout");
 
-	return (ShaderId)m_shaders.size() - 1;
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::shader_destroy(ShaderId shader_id) {
+	Shader& shader = m_shaders[shader_id];
+
+	for (VkDescriptorSetLayout set_layout : shader.set_layouts)
+		vkDestroyDescriptorSetLayout(m_context->device(), set_layout, nullptr);
+
+	for (StageInfo& stage_info : shader.stages)
+		vkDestroyShaderModule(m_context->device(), stage_info.module, nullptr);
+
+	vkDestroyPipelineLayout(m_context->device(), shader.pipeline_layout, nullptr);
+
+	m_shaders.erase(shader_id);
 }
 
 PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipeline_info) {
 	MY_PROFILE_FUNCTION(); 
 	
-	m_pipelines.push_back({});
-	Pipeline& pipeline = m_pipelines.back();
+	m_pipelines[m_render_id] = {};
+	Pipeline& pipeline = m_pipelines[m_render_id];
 	pipeline.info = pipeline_info;
 
 	const Shader& shader = m_shaders[pipeline.info.shader_id];
@@ -969,7 +1012,13 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 	if (vkCreateGraphicsPipelines(m_context->device(), VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline.pipeline) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create graphics pipeline");
 
-	return (PipelineId)m_pipelines.size() - 1;
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::pipeline_destroy(PipelineId pipeline_id) {
+	vkDestroyPipeline(m_context->device(), m_pipelines[pipeline_id].pipeline, nullptr);
+	
+	m_pipelines.erase(pipeline_id);
 }
 
 BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t size) {
@@ -987,8 +1036,8 @@ BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t
 
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 
-	m_buffers.push_back(buffer);
-	return (BufferId)m_buffers.size() - 1;
+	m_buffers[m_render_id] = std::move(buffer);
+	return m_render_id++;;
 }
 
 BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t size, IndexType index_type) {
@@ -1008,8 +1057,8 @@ BufferId VulkanGraphicsController::index_buffer_create(const void* data, size_t 
 
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 
-	m_buffers.push_back(buffer);
-	return (BufferId)m_buffers.size() - 1;
+	m_buffers[m_render_id] = std::move(buffer);
+	return m_render_id++;
 }
 
 BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_t size) {
@@ -1028,8 +1077,16 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 		buffer_memory_barrier(buffer.buffer, buffer.usage, 0, size);
 	}
 
-	m_buffers.push_back(buffer);
-	return (BufferId)m_buffers.size() - 1;
+	m_buffers[m_render_id] = std::move(buffer);
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::buffer_destroy(BufferId buffer_id) {
+	Buffer& buffer = m_buffers[buffer_id];
+	vkDestroyBuffer(m_context->device(), buffer.buffer, nullptr);
+	vkFreeMemory(m_context->device(), buffer.memory, nullptr);
+
+	m_buffers.erase(buffer_id);
 }
 
 void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
@@ -1045,15 +1102,15 @@ void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* dat
 }
 
 ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
-	MY_PROFILE_FUNCTION(); 
-	
+	MY_PROFILE_FUNCTION();
+
 	VkFormat vk_format = (VkFormat)info.format;
 	VkDeviceSize size = vk_format_to_size(vk_format) * info.width * info.height * info.depth * info.layer_count;
 
 	VkImageUsageFlags image_usage = image_usage_to_vk_image_usage(info.usage);
 	VkMemoryPropertyFlags mem_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
-	
+
 	// TODO: Add cpu visible image memory usage
 	//if (info.usage & ImageUsageCPUVisible) {
 	//	mem_props = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
@@ -1069,10 +1126,8 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 		.tiling = tiling
 	};
 
-	m_images.push_back(image);
-	ImageId image_id = (ImageId)m_images.size() - 1;
-
-	return image_id;
+	m_images[m_render_id] = std::move(image);
+	return m_render_id++;
 }
 
 void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInfo& image_data_info) {
@@ -1122,9 +1177,17 @@ void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInf
 	vulkan_image_memory_barrier(image.image, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, layer_count);
 }
 
+void VulkanGraphicsController::image_destroy(ImageId image_id) {
+	Image& image = m_images[image_id];
+	vkDestroyImage(m_context->device(), image.image, nullptr);
+	vkFreeMemory(m_context->device(), image.memory, nullptr);
+
+	m_images.erase(image_id);
+}
+
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
-	MY_PROFILE_FUNCTION(); 
-	
+	MY_PROFILE_FUNCTION();
+
 	VkSamplerCreateInfo sampler_info{
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.magFilter = (VkFilter)info.mag_filter,
@@ -1151,9 +1214,14 @@ SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
 	if (vkCreateSampler(m_context->device(), &sampler_info, nullptr, &sampler.sampler) != VK_SUCCESS)
 		throw std::runtime_error("Failed to create sampler");
 
-	m_samplers.push_back(sampler);
+	m_samplers[m_render_id] = std::move(sampler);
+	return m_render_id++;
+}
 
-	return (SamplerId)m_samplers.size() - 1;
+void VulkanGraphicsController::sampler_destroy(SamplerId sampler_id) {
+	vkDestroySampler(m_context->device(), m_samplers[sampler_id].sampler, nullptr);
+
+	m_samplers.erase(sampler_id);
 }
 
 UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const UniformInfo* uniforms, size_t uniform_count) {
@@ -1251,7 +1319,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 		writes.push_back(write);
 	}
 
-	uint32_t pool_idx = descriptor_pool_allocate(pool_key);
+	size_t pool_idx = descriptor_pool_allocate(pool_key);
 	const DescriptorPool& pool = m_descriptor_pools.at(pool_key)[pool_idx];
 
 	VkDescriptorSetAllocateInfo set_allocate_info{
@@ -1280,8 +1348,23 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 	}
 	vkUpdateDescriptorSets(m_context->device(), (uint32_t)writes.size(), writes.data(), 0, nullptr);
 
-	m_uniform_sets.push_back(std::move(uniform_set));
-	return (UniformSetId)m_uniform_sets.size() - 1;
+	m_uniform_sets[m_render_id] = std::move(uniform_set);
+	return m_render_id++;
+}
+
+void VulkanGraphicsController::uniform_set_destroy(UniformSetId uniform_set_id) {
+	UniformSet& uniform_set = m_uniform_sets[uniform_set_id];
+
+	VkDescriptorPool descriptor_pool = m_descriptor_pools[uniform_set.pool_key][uniform_set.pool_idx].pool;
+
+	VkDevice device = m_context->device();
+	for (VkImageView image_view : uniform_set.image_views)
+		vkDestroyImageView(device, image_view, nullptr);
+	vkFreeDescriptorSets(device, descriptor_pool, 1, &uniform_set.descriptor_set);
+	
+	descriptor_pool_free(uniform_set.pool_key, uniform_set.pool_idx);
+
+	m_uniform_sets.erase(uniform_set_id);
 }
 
 ScreenResolution VulkanGraphicsController::screen_resolution() const {
@@ -1566,20 +1649,20 @@ uint32_t VulkanGraphicsController::find_memory_type(uint32_t type_filter, VkMemo
 	throw std::runtime_error("Failed to find suitable memory type");
 }
 
-uint32_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPoolKey& key) {
+size_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPoolKey& key) {
 	if (!m_descriptor_pools.contains(key)) {
 		m_descriptor_pools[key] = {};
 	}
 
-	std::vector<DescriptorPool>& pools = m_descriptor_pools.at(key);
+	std::unordered_map<RenderId, DescriptorPool>& pools = m_descriptor_pools.at(key);
 
-	for (uint32_t i = 0; i < pools.size(); i++) {
-		if (pools[i].usage_count < MAX_SETS_PER_DESCRIPTOR_POOL) {
-			pools[i].usage_count++;
-			return i;
+	for (auto& pool : pools) {
+		if (pool.second.usage_count < MAX_SETS_PER_DESCRIPTOR_POOL) {
+			pool.second.usage_count++;
+			return pool.first;
 		}
 	}
-	
+
 	std::vector<VkDescriptorPoolSize> sizes;
 
 	if (key.uniform_type_counts[(uint32_t)UniformType::Sampler]) {
@@ -1632,10 +1715,21 @@ uint32_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPool
 		.usage_count = 1
 	};
 
-	pools.push_back(desc_pool);
-	return (uint32_t)pools.size() - 1;
+	pools[m_render_id] = std::move(desc_pool);
+	return m_render_id++;
 }
 
-void VulkanGraphicsController::descriptor_pools_free() {
+void VulkanGraphicsController::descriptor_pool_free(const DescriptorPoolKey& pool_key, RenderId pool_id) {
+	auto& pools = m_descriptor_pools[pool_key];
+	DescriptorPool& pool = pools[pool_id];
 
+	pool.usage_count--;
+
+	if (pool.usage_count <= 0) {
+		vkDestroyDescriptorPool(m_context->device(), pool.pool, nullptr);
+		pools.erase(pool_id);
+	}
+
+	if (pools.empty())
+		m_descriptor_pools.erase(pool_key);
 }
