@@ -4,7 +4,7 @@
 #include <spirv_reflect.h>
 
 #include <algorithm>
-// TODO: Loggilg
+// TODO: Logging
 #include <iostream>
 #include <utility>
 #include <stdexcept>
@@ -252,8 +252,11 @@ void VulkanGraphicsController::create(VulkanContext* context) {
 
 	m_context = context;
 
-	uint32_t frame_count = m_context->swapchain_image_count() + 1;
+	uint32_t frame_count = 2;
 	m_frames.resize(frame_count);
+
+	m_actions_after_current_frame = &m_actions_1;
+	m_actions_after_next_frame = &m_actions_2;
 
 	VkCommandPoolCreateInfo command_pool_info{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -309,6 +312,14 @@ void VulkanGraphicsController::destroy() {
 
 	m_context->sync();
 
+	for (auto& func : *m_actions_after_current_frame)
+		func();
+	m_actions_after_current_frame->clear();
+
+	for (auto& func : *m_actions_after_next_frame)
+		func();
+	m_actions_after_next_frame->clear();
+
 	vkEndCommandBuffer(m_frames[m_frame_index].setup_buffer);
 	vkEndCommandBuffer(m_frames[m_frame_index].draw_buffer);
 
@@ -316,7 +327,7 @@ void VulkanGraphicsController::destroy() {
 
 	for (auto& uniform_set : m_uniform_sets) {
 		VkDescriptorPool descriptor_pool =
-			m_descriptor_pools[uniform_set.second.pool_key][uniform_set.second.pool_idx].pool;
+			m_descriptor_pools.at(uniform_set.second.pool_key).at(uniform_set.second.pool_idx).pool;
 
 		for (VkImageView image_view : uniform_set.second.image_views)
 			vkDestroyImageView(device, image_view, nullptr);
@@ -344,6 +355,7 @@ void VulkanGraphicsController::destroy() {
 
 	for (auto& sampler : m_samplers)
 		vkDestroySampler(device, sampler.second.sampler, nullptr);
+	m_samplers.clear();
 
 	for (auto& shader : m_shaders) {
 		for (VkDescriptorSetLayout set_layout : shader.second.set_layouts)
@@ -364,11 +376,6 @@ void VulkanGraphicsController::destroy() {
 		vkDestroyQueryPool(device, frame.timestamp_query_pool.pool, nullptr);
 
 		vkDestroyCommandPool(device, frame.command_pool, nullptr);
-
-		for (StagingBuffer& buffer : frame.staging_buffers) {
-			vkDestroyBuffer(device, buffer.buffer, nullptr);
-			vkFreeMemory(device, buffer.memory, nullptr);
-		}
 	}
 	m_frames.clear();
 
@@ -403,21 +410,20 @@ void VulkanGraphicsController::end_frame() {
 	vkBeginCommandBuffer(m_frames[m_frame_index].setup_buffer, &begin_info);
 	vkBeginCommandBuffer(m_frames[m_frame_index].draw_buffer, &begin_info);
 
-	VkDevice device = m_context->device();
-	for (StagingBuffer& buffer : m_frames[m_frame_index].staging_buffers) {
-		vkDestroyBuffer(device, buffer.buffer, nullptr);
-		vkFreeMemory(device, buffer.memory, nullptr);
-	}
-	m_frames[m_frame_index].staging_buffers.clear();
+	for (auto& func : *m_actions_after_current_frame)
+		func();
+	m_actions_after_current_frame->clear();
+	
+	std::swap(m_actions_after_current_frame, m_actions_after_next_frame);
 }
 
 void VulkanGraphicsController::draw_begin(FramebufferId framebuffer_id, const ClearValue* clear_values, uint32_t count) {
-	const Framebuffer& framebuffer = m_framebuffers[framebuffer_id];
-	const RenderPass& render_pass = m_render_passes[framebuffer.render_pass_id];
+	const Framebuffer& framebuffer = m_framebuffers.at(framebuffer_id);
+	const RenderPass& render_pass = m_render_passes.at(framebuffer.render_pass_id);
 
 	// Transition attchment image layout to its initial layout specified in VkRenderPass instance if it changed
 	for (uint32_t i = 0; i < framebuffer.attachments.size(); i++) {
-		Image& attachment_image = m_images[framebuffer.attachments[i]];
+		Image& attachment_image = m_images.at(framebuffer.attachments[i]);
 
 		image_should_have_layout(attachment_image, render_pass.attachments[i].initial_layout);
 
@@ -490,24 +496,24 @@ void VulkanGraphicsController::draw_set_stencil_reference(StencilFaces faces, ui
 }
 
 void VulkanGraphicsController::draw_push_constants(ShaderId shader, ShaderStageFlags stage, uint32_t offset, uint32_t size, const void* data) {
-	vkCmdPushConstants(m_frames[m_frame_index].draw_buffer, m_shaders[shader].pipeline_layout, (VkShaderStageFlags)stage, offset, size, data);
+	vkCmdPushConstants(m_frames[m_frame_index].draw_buffer, m_shaders.at(shader).pipeline_layout, (VkShaderStageFlags)stage, offset, size, data);
 }
 
 void VulkanGraphicsController::draw_bind_pipeline(PipelineId pipeline_id) {
-	const Pipeline& pipeline = m_pipelines[pipeline_id];
+	const Pipeline& pipeline = m_pipelines.at(pipeline_id);
 
 	vkCmdBindPipeline(m_frames[m_frame_index].draw_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 }
 
 void VulkanGraphicsController::draw_bind_vertex_buffer(BufferId buffer_id) {
-	Buffer& buffer = m_buffers[buffer_id];
+	Buffer& buffer = m_buffers.at(buffer_id);
 
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(m_frames[m_frame_index].draw_buffer, 0, 1, &buffer.buffer, &offset);
 }
 
 void VulkanGraphicsController::draw_bind_index_buffer(BufferId buffer_id, IndexType index_type) {
-	Buffer& buffer = m_buffers[buffer_id];
+	Buffer& buffer = m_buffers.at(buffer_id);
 
 	vkCmdBindIndexBuffer(m_frames[m_frame_index].draw_buffer, buffer.buffer, 0, (VkIndexType)index_type);
 }
@@ -517,10 +523,10 @@ void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, ui
 	descriptor_sets.reserve(count);
 	
 	for (uint32_t i = 0; i < count; i++) {
-		UniformSet& set = m_uniform_sets[set_ids[i]];
+		UniformSet& set = m_uniform_sets.at(set_ids[i]);
 
 		for (ImageId id : set.images)
-			image_should_have_layout(m_images[id], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			image_should_have_layout(m_images.at(id), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	
 		descriptor_sets.push_back(set.descriptor_set);
 	}
@@ -528,7 +534,7 @@ void VulkanGraphicsController::draw_bind_uniform_sets(PipelineId pipeline_id, ui
 	vkCmdBindDescriptorSets(
 		m_frames[m_frame_index].draw_buffer,
 		VK_PIPELINE_BIND_POINT_GRAPHICS,
-		m_pipelines[pipeline_id].layout,
+		m_pipelines.at(pipeline_id).layout,
 		first_set, count, descriptor_sets.data(),
 		0, nullptr
 	);
@@ -638,15 +644,17 @@ RenderPassId VulkanGraphicsController::render_pass_create(const RenderPassAttach
 }
 
 void VulkanGraphicsController::render_pass_destroy(RenderPassId render_pass_id) {
-	vkDestroyRenderPass(m_context->device(), m_render_passes[render_pass_id].render_pass, nullptr);
-	m_render_passes.erase(render_pass_id);
+	m_actions_after_next_frame->push_back([&, render_pass_id = render_pass_id]() {
+		vkDestroyRenderPass(m_context->device(), m_render_passes.at(render_pass_id).render_pass, nullptr);
+		m_render_passes.erase(render_pass_id);
+	});
 }
 
 FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count) {
-	RenderPass& render_pass = m_render_passes[render_pass_id];
+	RenderPass& render_pass = m_render_passes.at(render_pass_id);
 
-	uint32_t width = m_images[ids[0]].info.width;
-	uint32_t height = m_images[ids[0]].info.height;
+	uint32_t width = m_images.at(ids[0]).info.width;
+	uint32_t height = m_images.at(ids[0]).info.height;
 
 	Framebuffer framebuffer{
 		.render_pass_id = render_pass_id,
@@ -659,7 +667,7 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 	for (uint32_t i = 0; i < count; i++) {
 		framebuffer.attachments.push_back(ids[i]);
 		
-		const Image& image = m_images[ids[i]];
+		const Image& image = m_images.at(ids[i]);
 		
 		framebuffer.image_views.push_back(image_view_create(image, image.info.usage));
 	}
@@ -682,19 +690,22 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 }
 
 void VulkanGraphicsController::framebuffer_destroy(FramebufferId framebuffer_id) {
-	Framebuffer& framebuffer = m_framebuffers[framebuffer_id];
+	m_actions_after_next_frame->push_back([&, framebuffer_id = framebuffer_id]() {
+		Framebuffer& framebuffer = m_framebuffers.at(framebuffer_id);
 
-	for (VkImageView view : framebuffer.image_views)
-		vkDestroyImageView(m_context->device(), view, nullptr);
-	vkDestroyFramebuffer(m_context->device(), framebuffer.framebuffer, nullptr);
-	m_framebuffers.erase(framebuffer_id);
+		for (VkImageView view : framebuffer.image_views)
+			vkDestroyImageView(m_context->device(), view, nullptr);
+		vkDestroyFramebuffer(m_context->device(), framebuffer.framebuffer, nullptr);
+	
+		m_framebuffers.erase(framebuffer_id);
+	});
 }
 
 ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, RenderId stage_count) {
 	MY_PROFILE_FUNCTION(); 
 	
 	m_shaders[m_render_id] = {};
-	Shader& shader = m_shaders[m_render_id];
+	Shader& shader = m_shaders.at(m_render_id);
 	
 	auto reflect_shader_stage = [&, this](const void* spv, size_t size) {
 		spv_reflect::ShaderModule shader_module(size, spv);
@@ -868,27 +879,29 @@ ShaderId VulkanGraphicsController::shader_create(const ShaderStage* stages, Rend
 }
 
 void VulkanGraphicsController::shader_destroy(ShaderId shader_id) {
-	Shader& shader = m_shaders[shader_id];
+	m_actions_after_next_frame->push_back([&, shader_id = shader_id]() {
+		Shader& shader = m_shaders.at(shader_id);
 
-	for (VkDescriptorSetLayout set_layout : shader.set_layouts)
-		vkDestroyDescriptorSetLayout(m_context->device(), set_layout, nullptr);
+		for (VkDescriptorSetLayout set_layout : shader.set_layouts)
+			vkDestroyDescriptorSetLayout(m_context->device(), set_layout, nullptr);
 
-	for (StageInfo& stage_info : shader.stages)
-		vkDestroyShaderModule(m_context->device(), stage_info.module, nullptr);
+		for (StageInfo& stage_info : shader.stages)
+			vkDestroyShaderModule(m_context->device(), stage_info.module, nullptr);
 
-	vkDestroyPipelineLayout(m_context->device(), shader.pipeline_layout, nullptr);
+		vkDestroyPipelineLayout(m_context->device(), shader.pipeline_layout, nullptr);
 
-	m_shaders.erase(shader_id);
+		m_shaders.erase(shader_id);
+	});
 }
 
 PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipeline_info) {
 	MY_PROFILE_FUNCTION(); 
 	
 	m_pipelines[m_render_id] = {};
-	Pipeline& pipeline = m_pipelines[m_render_id];
+	Pipeline& pipeline = m_pipelines.at(m_render_id);
 	pipeline.info = pipeline_info;
 
-	const Shader& shader = m_shaders[pipeline.info.shader_id];
+	const Shader& shader = m_shaders.at(pipeline.info.shader_id);
 	
 	pipeline.layout = shader.pipeline_layout;
 
@@ -1004,7 +1017,7 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 		.pDynamicState = &dynamic_state,
 		.layout = shader.pipeline_layout,
 		.renderPass = pipeline_info.render_pass_id
-			? m_render_passes[pipeline_info.render_pass_id.value()].render_pass
+			? m_render_passes.at(pipeline_info.render_pass_id.value()).render_pass
 			: m_context->swapchain_render_pass(),
 		.subpass = 0
 	};
@@ -1016,9 +1029,11 @@ PipelineId VulkanGraphicsController::pipeline_create(const PipelineInfo& pipelin
 }
 
 void VulkanGraphicsController::pipeline_destroy(PipelineId pipeline_id) {
-	vkDestroyPipeline(m_context->device(), m_pipelines[pipeline_id].pipeline, nullptr);
-	
-	m_pipelines.erase(pipeline_id);
+	m_actions_after_next_frame->push_back([&, pipeline_id = pipeline_id]() {
+		vkDestroyPipeline(m_context->device(), m_pipelines.at(pipeline_id).pipeline, nullptr);
+		
+		m_pipelines.erase(pipeline_id);
+	});
 }
 
 BufferId VulkanGraphicsController::vertex_buffer_create(const void* data, size_t size) {
@@ -1082,17 +1097,20 @@ BufferId VulkanGraphicsController::uniform_buffer_create(const void* data, size_
 }
 
 void VulkanGraphicsController::buffer_destroy(BufferId buffer_id) {
-	Buffer& buffer = m_buffers[buffer_id];
-	vkDestroyBuffer(m_context->device(), buffer.buffer, nullptr);
-	vkFreeMemory(m_context->device(), buffer.memory, nullptr);
+	m_actions_after_next_frame->push_back([&, buffer_id = buffer_id] {
+		Buffer& buffer = m_buffers.at(buffer_id);
 
-	m_buffers.erase(buffer_id);
+		vkDestroyBuffer(m_context->device(), buffer.buffer, nullptr);
+		vkFreeMemory(m_context->device(), buffer.memory, nullptr);
+
+		m_buffers.erase(buffer_id);
+	});
 }
 
 void VulkanGraphicsController::buffer_update(BufferId buffer_id, const void* data) {
 	MY_PROFILE_FUNCTION(); 
 	
-	Buffer& buffer = m_buffers[buffer_id];
+	Buffer& buffer = m_buffers.at(buffer_id);
 
 	buffer_memory_barrier(buffer.buffer, buffer.usage, 0, buffer.size);
 
@@ -1133,7 +1151,7 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInfo& image_data_info) {
 	MY_PROFILE_FUNCTION(); 
 	
-	const Image& image = m_images[image_id];
+	const Image& image = m_images.at(image_id);
 	const ImageInfo& image_info = image.info;
 
 	VkExtent3D extent = { image_info.width, image_info.height, image_info.depth };
@@ -1143,20 +1161,18 @@ void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInf
 	uint32_t layer_count = image_info.layer_count;
 
 	vulkan_image_memory_barrier(image.image, image.full_aspect, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
-
-	StagingBuffer staging_buffer = staging_buffer_create(image_data_info.data, image_data_size);
+	
+	auto [staging_buffer, staging_buffer_memory] = staging_buffer_create(image_data_info.data, image_data_size);
 
 	if (image_info.format == image_data_info.format) {
 		vulkan_copy_buffer_to_image(image.image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
 	} else {
-		Image staging_image{
-			.image = vulkan_image_create(image_info.view_type, (VkFormat)image_data_info.format, extent, layer_count, image.tiling, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT),
-			.memory = vulkan_image_allocate(staging_image.image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-		};
+		VkImage staging_image = vulkan_image_create(image_info.view_type, (VkFormat)image_data_info.format, extent, layer_count, image.tiling, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+		VkDeviceMemory staging_image_memory = vulkan_image_allocate(staging_image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-		vulkan_image_memory_barrier(staging_image.image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
-		vulkan_copy_buffer_to_image(staging_image.image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
-		vulkan_image_memory_barrier(staging_image.image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layer_count);
+		vulkan_image_memory_barrier(staging_image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+		vulkan_copy_buffer_to_image(staging_image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+		vulkan_image_memory_barrier(staging_image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layer_count);
 		
 		VkOffset3D offset = { (int32_t)extent.width, (int32_t)extent.height, (int32_t)extent.depth };
 
@@ -1168,21 +1184,27 @@ void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInf
 		region.dstOffsets[0] = { 0, 0, 0 };
 		region.dstOffsets[1] = offset;
 
-		vkCmdBlitImage(m_frames[m_frame_index].draw_buffer, staging_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VkFilter::VK_FILTER_LINEAR);
+		vkCmdBlitImage(m_frames[m_frame_index].draw_buffer, staging_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VkFilter::VK_FILTER_LINEAR);
+	
+		staging_image_destroy(staging_image, staging_image_memory);
 	}
 	
 	if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
 		layout = image_usage_to_optimal_image_layout(image.info.usage);
 
 	vulkan_image_memory_barrier(image.image, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, layer_count);
+
+	staging_buffer_destroy(staging_buffer, staging_buffer_memory);
 }
 
 void VulkanGraphicsController::image_destroy(ImageId image_id) {
-	Image& image = m_images[image_id];
-	vkDestroyImage(m_context->device(), image.image, nullptr);
-	vkFreeMemory(m_context->device(), image.memory, nullptr);
+	m_actions_after_next_frame->push_back([&, image_id = image_id]() {
+		Image& image = m_images.at(image_id);
+		vkDestroyImage(m_context->device(), image.image, nullptr);
+		vkFreeMemory(m_context->device(), image.memory, nullptr);
 
-	m_images.erase(image_id);
+		m_images.erase(image_id);
+	});
 }
 
 SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
@@ -1219,15 +1241,17 @@ SamplerId VulkanGraphicsController::sampler_create(const SamplerInfo& info) {
 }
 
 void VulkanGraphicsController::sampler_destroy(SamplerId sampler_id) {
-	vkDestroySampler(m_context->device(), m_samplers[sampler_id].sampler, nullptr);
+	m_actions_after_next_frame->push_back([&, sampler_id = sampler_id]() {
+		vkDestroySampler(m_context->device(), m_samplers.at(sampler_id).sampler, nullptr);
 
-	m_samplers.erase(sampler_id);
+		m_samplers.erase(sampler_id);
+	});
 }
 
 UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, uint32_t set_idx, const UniformInfo* uniforms, size_t uniform_count) {
 	MY_PROFILE_FUNCTION(); 
 	
-	SetInfo& set = *m_shaders[shader_id].find_set(set_idx);
+	SetInfo& set = *m_shaders.at(shader_id).find_set(set_idx);
 
 	std::vector<ImageId> images;
 	std::vector<VkImageView> image_views;
@@ -1258,7 +1282,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 			std::vector<VkDescriptorImageInfo> image_infos;
 
 			for (size_t j = 0; j < uniform.id_count; j += 2) {
-				Image& image = m_images[uniform.ids[j]];
+				Image& image = m_images.at(uniform.ids[j]);
 
 				if (image.info.usage & ImageUsageDepthStencilReadOnly)
 					image_should_have_layout(image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
@@ -1293,7 +1317,7 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 			std::vector<VkDescriptorBufferInfo> buffer_infos;
 
 			for (size_t j = 0; j < uniform.id_count; j++) {
-				Buffer& buffer = m_buffers[uniform.ids[j]];
+				Buffer& buffer = m_buffers.at(uniform.ids[j]);
 
 				VkDescriptorBufferInfo buffer_info{
 					.buffer = buffer.buffer,
@@ -1320,13 +1344,13 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 	}
 
 	size_t pool_idx = descriptor_pool_allocate(pool_key);
-	const DescriptorPool& pool = m_descriptor_pools.at(pool_key)[pool_idx];
+	const DescriptorPool& pool = m_descriptor_pools.at(pool_key).at(pool_idx);
 
 	VkDescriptorSetAllocateInfo set_allocate_info{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = pool.pool,
 		.descriptorSetCount = 1,
-		.pSetLayouts = &m_shaders[shader_id].set_layouts[set_idx]
+		.pSetLayouts = &m_shaders.at(shader_id).set_layouts[set_idx]
 	};
 	
 	VkDescriptorSet descriptor_set;
@@ -1353,22 +1377,28 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 }
 
 void VulkanGraphicsController::uniform_set_destroy(UniformSetId uniform_set_id) {
-	UniformSet& uniform_set = m_uniform_sets[uniform_set_id];
+	m_actions_after_next_frame->push_back([&, uniform_set_id = uniform_set_id]() {
+		UniformSet& uniform_set = m_uniform_sets.at(uniform_set_id);
 
-	VkDescriptorPool descriptor_pool = m_descriptor_pools[uniform_set.pool_key][uniform_set.pool_idx].pool;
+		VkDescriptorPool descriptor_pool = m_descriptor_pools.at(uniform_set.pool_key).at(uniform_set.pool_idx).pool;
 
-	VkDevice device = m_context->device();
-	for (VkImageView image_view : uniform_set.image_views)
-		vkDestroyImageView(device, image_view, nullptr);
-	vkFreeDescriptorSets(device, descriptor_pool, 1, &uniform_set.descriptor_set);
-	
-	descriptor_pool_free(uniform_set.pool_key, uniform_set.pool_idx);
+		VkDevice device = m_context->device();
+		for (VkImageView image_view : uniform_set.image_views)
+			vkDestroyImageView(device, image_view, nullptr);
+		vkFreeDescriptorSets(device, descriptor_pool, 1, &uniform_set.descriptor_set);
+		
+		descriptor_pool_free(uniform_set.pool_key, uniform_set.pool_idx);
 
-	m_uniform_sets.erase(uniform_set_id);
+		m_uniform_sets.erase(uniform_set_id);
+	});
 }
 
 ScreenResolution VulkanGraphicsController::screen_resolution() const {
 	return { m_context->swapchain_extent().width, m_context->swapchain_extent().height };
+}
+
+void VulkanGraphicsController::sync() {
+	m_context->sync();
 }
 
 void VulkanGraphicsController::timestamp_query_begin() {
@@ -1437,20 +1467,6 @@ VkBuffer VulkanGraphicsController::buffer_create(VkBufferUsageFlags usage, VkDev
 	return buffer;
 }
 
-VulkanGraphicsController::StagingBuffer VulkanGraphicsController::staging_buffer_create(const void* data, size_t size) {
-	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
-	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-
-	void* staging_data = nullptr;
-	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
-	memcpy(staging_data, data, size);
-	vkUnmapMemory(m_context->device(), staging_memory);
-
-	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
-
-	return { staging_buffer, staging_memory };
-}
-
 VkDeviceMemory VulkanGraphicsController::buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props) {
 	VkMemoryRequirements mem_requirements;
 	vkGetBufferMemoryRequirements(m_context->device(), buffer, &mem_requirements);
@@ -1472,12 +1488,12 @@ VkDeviceMemory VulkanGraphicsController::buffer_allocate(VkBuffer buffer, VkMemo
 
 void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size) {
 	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
-	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	VkDeviceMemory staging_buffer_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
 	void* staging_data = nullptr;
-	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
+	vkMapMemory(m_context->device(), staging_buffer_memory, 0, size, 0, &staging_data);
 	memcpy(staging_data, data, size);
-	vkUnmapMemory(m_context->device(), staging_memory);
+	vkUnmapMemory(m_context->device(), staging_buffer_memory);
 
 	VkBufferCopy region{
 		.size = size
@@ -1485,7 +1501,7 @@ void VulkanGraphicsController::buffer_copy(VkBuffer buffer, const void* data, Vk
 
 	vkCmdCopyBuffer(m_frames[m_frame_index].draw_buffer, staging_buffer, buffer, 1, &region);
 
-	m_frames[m_frame_index].staging_buffers.emplace_back(staging_buffer, staging_memory);
+	staging_buffer_destroy(staging_buffer, staging_buffer_memory);
 }
 
 void VulkanGraphicsController::buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size) {
@@ -1511,6 +1527,27 @@ void VulkanGraphicsController::buffer_memory_barrier(VkBuffer& buffer, VkBufferU
 		1, &barrier,
 		0, nullptr
 	);
+}
+
+std::pair<VkBuffer, VkDeviceMemory> VulkanGraphicsController::staging_buffer_create(const void* data, size_t size) {
+	VkBuffer staging_buffer = buffer_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, size);
+	VkDeviceMemory staging_memory = buffer_allocate(staging_buffer, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+	void* staging_data = nullptr;
+	vkMapMemory(m_context->device(), staging_memory, 0, size, 0, &staging_data);
+	memcpy(staging_data, data, size);
+	vkUnmapMemory(m_context->device(), staging_memory);
+
+	return { staging_buffer, staging_memory };
+}
+
+void VulkanGraphicsController::staging_buffer_destroy(VkBuffer buffer, VkDeviceMemory memory) {
+	m_actions_after_next_frame->push_back([&, buf = buffer, mem = memory]() {
+		VkDevice device = m_context->device();
+		
+		vkDestroyBuffer(device, buf, nullptr);
+		vkFreeMemory(device, mem, nullptr);
+	});
 }
 
 VkImage VulkanGraphicsController::vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage) {
@@ -1594,14 +1631,14 @@ VkImageView VulkanGraphicsController::image_view_create(const Image& image, Imag
 	return image_view;
 }
 
-void VulkanGraphicsController::vulkan_copy_buffer_to_image(VkImage image, StagingBuffer staging_buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count) {
+void VulkanGraphicsController::vulkan_copy_buffer_to_image(VkImage image, VkBuffer buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count) {
 	VkBufferImageCopy region{
 		.bufferOffset = 0,
 		.imageSubresource = { .aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count },
 		.imageExtent = extent
 	};
 
-	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, staging_buffer.buffer, image, layout, 1, &region);
+	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, buffer, image, layout, 1, &region);
 }
 
 void VulkanGraphicsController::image_should_have_layout(Image& image, VkImageLayout layout) {
@@ -1635,6 +1672,15 @@ void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImag
 		0, nullptr,
 		1, &barrier
 	);
+}
+
+void VulkanGraphicsController::staging_image_destroy(VkImage image, VkDeviceMemory memory) {
+	m_actions_after_next_frame->push_back([&, im = image, mem = memory]() {
+		VkDevice device = m_context->device();
+		
+		vkDestroyImage(device, im, nullptr);
+		vkFreeMemory(device, mem, nullptr);
+	});
 }
 
 uint32_t VulkanGraphicsController::find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
@@ -1720,8 +1766,8 @@ size_t VulkanGraphicsController::descriptor_pool_allocate(const DescriptorPoolKe
 }
 
 void VulkanGraphicsController::descriptor_pool_free(const DescriptorPoolKey& pool_key, RenderId pool_id) {
-	auto& pools = m_descriptor_pools[pool_key];
-	DescriptorPool& pool = pools[pool_id];
+	auto& pools = m_descriptor_pools.at(pool_key);
+	DescriptorPool& pool = pools.at(pool_id);
 
 	pool.usage_count--;
 

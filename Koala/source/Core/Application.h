@@ -54,6 +54,7 @@ struct Node {
 
 struct Model {
 	std::vector<std::unique_ptr<Node>> nodes;
+	std::vector<MaterialId> materials;
 	VertexBufferId vertex_buffer_id;
 	IndexBufferId index_buffer_id;
 };

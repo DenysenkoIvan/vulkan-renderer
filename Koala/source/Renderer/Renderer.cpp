@@ -658,6 +658,51 @@ void Renderer::create(VulkanContext* context) {
 void Renderer::destroy() {
 	MY_PROFILE_FUNCTION();
 
+	m_graphics_controller.sync();
+
+	auto free_texture = [&](std::optional<Texture>& texture) {
+		if (texture.has_value()) {
+			m_image_usage_counts[texture->image]--;
+			if (m_image_usage_counts[texture->image] == 0) {
+				m_graphics_controller.image_destroy(texture->image);
+				m_image_usage_counts.erase(texture->image);
+			}
+
+			m_sampler_usage_counts[texture->sampler]--;
+			if (m_sampler_usage_counts[texture->sampler] == 0) {
+				m_graphics_controller.sampler_destroy(texture->sampler);
+				m_image_usage_counts.erase(texture->sampler);
+			}
+		}
+	};
+
+	for (auto& material_pair : m_materials) {
+		Material& material = material_pair.second;
+
+		free_texture(material.albedo);
+		free_texture(material.ao_rough_met);
+		free_texture(material.normal);
+		free_texture(material.emissive);
+	}
+	m_materials.clear();
+
+	for (auto& skybox : m_skyboxes) {
+		m_graphics_controller.image_destroy(skybox.second.image);
+		m_graphics_controller.uniform_set_destroy(skybox.second.uniform_set_1);
+	}
+	m_skyboxes.clear();
+
+	m_image_usage_counts.clear();
+	m_sampler_usage_counts.clear();
+
+	for (auto& vertex_buffer : m_vertex_buffers)
+		m_graphics_controller.buffer_destroy(vertex_buffer.second);
+	m_vertex_buffers.clear();
+
+	for (auto& index_buffer : m_index_buffers)
+		m_graphics_controller.buffer_destroy(index_buffer.second);
+	m_index_buffers.clear();
+
 	m_graphics_controller.destroy();
 }
 
@@ -830,10 +875,10 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 			});
 	}
 
-	//uint64_t timestamps[2] = { 0 };
-	//bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
-	//if (timestamps_are_available)
-	//	std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
+	uint64_t timestamps[2] = { 0 };
+	bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
+	if (timestamps_are_available)
+		std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
 
 	m_graphics_controller.timestamp_query_begin();
 	m_graphics_controller.timestamp_query_write_timestamp();
@@ -980,7 +1025,6 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 
 	m_graphics_controller.draw_end();
 
-
 	// Present to screen pass
 	glm::vec4 clear_color{ 1.0f, 0.0f, 1.0f, 1.0f };
 	m_graphics_controller.draw_begin_for_screen(clear_color);
@@ -1022,10 +1066,12 @@ void Renderer::draw_primitive(const glm::mat4& model, size_t vertex_buffer, size
 		m_draw_list.opaque_primitives.push_back(primitive);
 }
 
-MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count) {
-	MY_PROFILE_FUNCTION();
+void Renderer::draw_skybox(SkyboxId skybox_id) {
+	m_draw_list.skybox = skybox_id;
+}
 
-	MaterialId first_material_offset = (uint32_t)m_materials.size();
+void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count, MaterialId* material_ids) {
+	MY_PROFILE_FUNCTION();
 
 	std::vector<ImageId> image_ids;
 	image_ids.reserve(image_count);
@@ -1040,6 +1086,8 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 
 		ImageId id = m_graphics_controller.image_create(info);
 		m_graphics_controller.image_update(id, { info.format, images[i].data });
+
+		m_image_usage_counts[id] = 0;
 
 		image_ids.push_back(id);
 	}
@@ -1059,10 +1107,10 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 		};
 
 		SamplerId id = m_graphics_controller.sampler_create(info);
+		m_sampler_usage_counts[id] = 0;
+
 		sampler_ids.push_back(id);
 	}
-
-	m_materials.reserve(m_materials.size() + material_count);
 
 	for (uint32_t i = 0; i < material_count; i++) {
 		Material material{
@@ -1092,67 +1140,82 @@ MaterialId Renderer::materials_create(ImageSpecs* images, uint32_t image_count, 
 			uint32_t texture_id = materials[i].albedo_id.value();
 			const TextureSpecs& tex_specs = textures[texture_id];
 
-			albedo_map_ids[0] = image_ids[tex_specs.image_id];
-			albedo_map_ids[1] = sampler_ids[tex_specs.sampler_id];
+			ImageId image_id = image_ids[tex_specs.image_id];
+			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			material.has_albedo_map = true;
+			albedo_map_ids[0] = image_id;
+			albedo_map_ids[1] = sampler_id;
+
+			m_image_usage_counts[image_id]++;
+			m_sampler_usage_counts[sampler_id]++;
+
+			material.albedo = { image_id, sampler_id };
 		};
 		if (materials[i].ao_rough_met_id.has_value()) {
 			uint32_t texture_id = materials[i].ao_rough_met_id.value();
 			const TextureSpecs& tex_specs = textures[texture_id];
 
-			ao_rough_met_map_ids[0] = image_ids[tex_specs.image_id];
-			ao_rough_met_map_ids[1] = sampler_ids[tex_specs.sampler_id];
+			ImageId image_id = image_ids[tex_specs.image_id];
+			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			material.has_ao_rough_met_map = true;
+			ao_rough_met_map_ids[0] = image_id;
+			ao_rough_met_map_ids[1] = sampler_id;
+
+			m_image_usage_counts[image_id]++;
+			m_sampler_usage_counts[sampler_id]++;
+
+			material.ao_rough_met = { image_id, sampler_id };
 		}
 		if (materials[i].normals_id.has_value()) {
 			uint32_t texture_id = materials[i].normals_id.value();
 			const TextureSpecs& tex_specs = textures[texture_id];
 
-			normal_map_ids[0] = image_ids[tex_specs.image_id];
-			normal_map_ids[1] = sampler_ids[tex_specs.sampler_id];
+			ImageId image_id = image_ids[tex_specs.image_id];
+			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			material.has_normal_map = true;
+			normal_map_ids[0] = image_id;
+			normal_map_ids[1] = sampler_id;
+
+			m_image_usage_counts[image_id]++;
+			m_sampler_usage_counts[sampler_id]++;
+
+			material.normal = { image_id, sampler_id };
 		}
 		if (materials[i].emissive_id.has_value()) {
 			uint32_t texture_id = materials[i].emissive_id.value();
 			const TextureSpecs& tex_specs = textures[texture_id];
 
-			emissive_map_ids[0] = image_ids[tex_specs.image_id];
-			emissive_map_ids[1] = sampler_ids[tex_specs.sampler_id];
+			ImageId image_id = image_ids[tex_specs.image_id];
+			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			material.has_emissive_map = true;
+			emissive_map_ids[0] = image_id;
+			emissive_map_ids[1] = sampler_id;
+
+			m_image_usage_counts[image_id]++;
+			m_sampler_usage_counts[sampler_id]++;
+
+			material.emissive = { image_id, sampler_id };
 		}
 
 		ShaderId shader_id = materials[i].alpha_mode == AlphaMode::Blend ? m_blend_pipeline.shader : m_g_pipeline.shader;
 
 		material.uniform_set = m_graphics_controller.uniform_set_create(shader_id, 1, uniforms.data(), (uint32_t)uniforms.size());
 
-		m_materials.push_back(material);
+		m_materials[m_render_id] = std::move(material);
+		material_ids[i] = m_render_id;
+
+		m_render_id++;
 	}
-
-	return first_material_offset;
 }
 
-VertexBufferId Renderer::vertex_buffer_create(const Vertex* data, size_t count) {
-	MY_PROFILE_FUNCTION();
+void Renderer::materials_destroy(MaterialId* material_ids, size_t count) {
+	for (size_t i = 0; i < count; i++) {
+		MaterialId material_id = material_ids[i];
 
-	m_vertex_buffers.push_back(m_graphics_controller.vertex_buffer_create(data, count * sizeof(Vertex)));
+		material_destroy(material_id);
 
-	return m_vertex_buffers.size() - 1;
-}
-
-IndexBufferId Renderer::index_buffer_create(const uint32_t* data, size_t count) {
-	MY_PROFILE_FUNCTION();
-
-	m_index_buffers.push_back(m_graphics_controller.index_buffer_create(data, count * 4, IndexType::Uint32));
-
-	return m_index_buffers.size() - 1;
-}
-
-void Renderer::draw_skybox(SkyboxId skybox_id) {
-	m_draw_list.skybox = skybox_id;
+		m_materials.erase(material_id);
+	}
 }
 
 SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
@@ -1167,6 +1230,8 @@ SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
 	};
 
 	ImageId id = m_graphics_controller.image_create(skybox_texture_info);
+	m_image_usage_counts[id]++;
+
 	m_graphics_controller.image_update(id, { texture.data_format,  texture.data });
 
 	RenderId texture_ids[2] = { id, m_skybox_pipeline.sampler };
@@ -1184,6 +1249,71 @@ SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
 		.uniform_set_1 = m_graphics_controller.uniform_set_create(m_skybox_pipeline.shader, 1, &skybox_texture_uniform, 1)
 	};
 
-	m_skyboxes.push_back(skybox);
-	return (RenderId)m_skyboxes.size() - 1;
+	m_skyboxes[m_render_id] = std::move(skybox);
+	return m_render_id++;
+}
+
+void Renderer::skybox_destroy(SkyboxId skybox_id) {
+	Skybox& skybox = m_skyboxes.at(skybox_id);
+	
+	clear_image(skybox.image);
+	m_graphics_controller.uniform_set_destroy(skybox.uniform_set_1);
+
+	m_skyboxes.erase(skybox_id);
+}
+
+VertexBufferId Renderer::vertex_buffer_create(const Vertex* data, size_t count) {
+	MY_PROFILE_FUNCTION();
+
+	BufferId buffer_id = m_graphics_controller.vertex_buffer_create(data, count * sizeof(Vertex));
+
+	m_vertex_buffers[m_render_id] = buffer_id;
+
+	return m_render_id++;
+}
+
+IndexBufferId Renderer::index_buffer_create(const uint32_t* data, size_t count) {
+	MY_PROFILE_FUNCTION();
+
+	BufferId buffer_id = m_graphics_controller.index_buffer_create(data, count * 4, IndexType::Uint32);
+
+	m_index_buffers[m_render_id] = buffer_id;
+
+	return m_render_id++;
+}
+
+void Renderer::material_destroy(MaterialId material_id) {
+	Material& material = m_materials.at(material_id);
+	
+	if (material.albedo.has_value()) {
+		clear_image(material.albedo->image);
+		clear_sampler(material.albedo->sampler);
+	} if (material.ao_rough_met.has_value()) {
+		clear_image(material.ao_rough_met->image);
+		clear_sampler(material.ao_rough_met->sampler);
+	} if (material.normal.has_value()) {
+		clear_image(material.normal->image);
+		clear_sampler(material.normal->sampler);
+	} if (material.emissive.has_value()) {
+		clear_image(material.emissive->image);
+		clear_sampler(material.emissive->sampler);
+	}
+}
+
+void Renderer::clear_image(ImageId image_id) {
+	size_t& image_count = m_image_usage_counts.at(image_id);
+
+	if (image_count == 0) {
+		m_graphics_controller.image_destroy(image_id);
+		m_image_usage_counts.erase(image_id);
+	}
+}
+
+void Renderer::clear_sampler(SamplerId sampler_id) {
+	size_t& sampler_count = m_sampler_usage_counts.at(sampler_id);
+
+	if (sampler_count == 0) {
+		m_graphics_controller.sampler_destroy(sampler_id);
+		m_sampler_usage_counts.erase(sampler_id);
+	}
 }

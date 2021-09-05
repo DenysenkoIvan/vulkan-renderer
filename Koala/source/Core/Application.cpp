@@ -253,6 +253,8 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 	std::vector<MaterialSpecs> materials;
 	materials.reserve(gltf_model.materials.size());
 
+	model.materials.resize(gltf_model.materials.size());
+
 	for (const auto& gltf_image : gltf_model.images) {
 		ImageSpecs image{
 			.width = (uint32_t)gltf_image.width,
@@ -381,7 +383,8 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 		images.data(), (uint32_t)images.size(),
 		samplers.data(), (uint32_t)samplers.size(),
 		textures.data(), (uint32_t)textures.size(),
-		materials.data(), (uint32_t)materials.size()
+		materials.data(), (uint32_t)materials.size(),
+		model.materials.data()
 	);
 
 	// Load nodes and geometry
@@ -467,7 +470,7 @@ Application::Application(const ApplicationProperties& props) {
 
 	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
 
-	m_draw_skybox = false;
+	m_draw_skybox = true;
 
 	if (m_draw_skybox) {
 
@@ -487,6 +490,11 @@ Application::Application(const ApplicationProperties& props) {
 }
 
 Application::~Application() {
+	m_renderer.materials_destroy(m_model.materials.data(), m_model.materials.size());
+	m_model.materials.clear();
+	if (m_draw_skybox)
+		m_renderer.skybox_destroy(m_skybox);
+
 	m_renderer.destroy();
 }
 

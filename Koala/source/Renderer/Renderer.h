@@ -22,7 +22,6 @@ using IndexBufferId = RenderId;
 using MaterialId = RenderId;
 using PrimitiveId = RenderId;
 using SkyboxId = RenderId;
-using NodeId = RenderId;
 
 enum class MagFilter : uint32_t {
 	Nearest,
@@ -168,15 +167,21 @@ public:
 	void draw_primitive(const glm::mat4& model, size_t vertex_buffer, size_t index_buffer, size_t first_index, size_t index_count, size_t vertex_count, MaterialId material);
 	void draw_skybox(SkyboxId skybox_id);
 
-	MaterialId materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count);
+	void materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count, MaterialId* material_ids);
+	void materials_destroy(MaterialId* material_ids, size_t count);
+	
 	SkyboxId skybox_create(const ImageSpecs& texture);
+	void skybox_destroy(SkyboxId skybox_id);
 	
 	VertexBufferId vertex_buffer_create(const Vertex* data, size_t count);
 	IndexBufferId index_buffer_create(const uint32_t* data, size_t count);
 
 private:
-	VulkanGraphicsController m_graphics_controller;
+	void material_destroy(MaterialId material_id);
+	void clear_image(ImageId image_id);
+	void clear_sampler(SamplerId sampler_id);
 
+private:
 	// Defalut shapes
 	struct Shape {
 		BufferId vertex_buffer;
@@ -289,17 +294,17 @@ private:
 	};
 
 	struct Texture {
-		SamplerId sampler;
 		ImageId image;
+		SamplerId sampler;
 	};
 
 	struct Material {
 		MaterialInfo info;
 		AlphaMode alpha_mode;
-		bool has_albedo_map;
-		bool has_ao_rough_met_map;
-		bool has_normal_map;
-		bool has_emissive_map;
+		std::optional<Texture> albedo;
+		std::optional<Texture> ao_rough_met;
+		std::optional<Texture> normal;
+		std::optional<Texture> emissive;
 		UniformSetId uniform_set;
 	};
 
@@ -316,13 +321,7 @@ private:
 	struct Defaults {
 		Texture empty_texture;
 	} m_defaults;
-
-	std::vector<BufferId> m_vertex_buffers;
-	std::vector<BufferId> m_index_buffers;
-	std::vector<Material> m_materials;
-	std::vector<Skybox> m_skyboxes;
-	std::vector<Light> m_lights;
-
+	
 	// Draw list
 	struct DrawList {
 		Light dir_light;
@@ -339,5 +338,17 @@ private:
 		}
 	};
 
+private:
+	VulkanGraphicsController m_graphics_controller;
+
+	RenderId m_render_id = 0;
+	std::unordered_map<ImageId, size_t> m_image_usage_counts;
+	std::unordered_map<SamplerId, size_t> m_sampler_usage_counts;
+	std::unordered_map<MaterialId, Material> m_materials;
+	std::unordered_map<VertexBufferId, BufferId> m_vertex_buffers;
+	std::unordered_map<IndexBufferId, BufferId> m_index_buffers;
+	std::unordered_map<SkyboxId, Skybox> m_skyboxes;
+
 	DrawList m_draw_list;
+	std::vector<Light> m_lights;
 };

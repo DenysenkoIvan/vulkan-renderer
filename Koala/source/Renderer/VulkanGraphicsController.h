@@ -3,8 +3,10 @@
 #include "Common.h"
 #include "VulkanContext.h"
 
+#include <functional>
 #include <map>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -434,6 +436,7 @@ public:
 	void uniform_set_destroy(UniformSetId uniform_set_id);
 
 	ScreenResolution screen_resolution() const;
+	void sync();
 
 	void timestamp_query_begin();
 	void timestamp_query_end();
@@ -534,16 +537,19 @@ private:
 		};
 	};
 
-	struct StagingBuffer {
-		VkBuffer buffer;
-		VkDeviceMemory memory;
+	enum class StagingType {
+		Buffer,
+		Image
 	};
 
-	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
-	StagingBuffer staging_buffer_create(const void* data, size_t size);
-	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
-	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
-	void buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size);
+	struct StagingResource {
+		StagingType type;
+		union {
+			VkBuffer buffer;
+			VkImage image;
+		};
+		VkDeviceMemory memory;
+	};
 
 	// Images
 	struct Image {
@@ -554,15 +560,6 @@ private:
 		VkImageAspectFlags full_aspect;
 		VkImageTiling tiling;
 	};
-
-	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
-	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
-	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
-	void vulkan_copy_buffer_to_image(VkImage image, StagingBuffer staging_buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count);
-	void image_should_have_layout(Image& image, VkImageLayout layout);
-	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
-	
-	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);
 
 	// Sampler
 	struct Sampler {
@@ -590,9 +587,6 @@ private:
 		size_t usage_count;
 	};
 
-	size_t descriptor_pool_allocate(const DescriptorPoolKey& key);
-	void descriptor_pool_free(const DescriptorPoolKey& pool_key, RenderId pool_id);
-
 	// Uniform Set
 	struct UniformSet {
 		std::vector<ImageId> images; // Used to check out if image is in proper layout before descriptor binding operation
@@ -611,15 +605,36 @@ private:
 		uint32_t timestamps_written;
 	};
 
-private:
+	// Frame
 	struct Frame {
 		VkCommandPool command_pool;
 		VkCommandBuffer setup_buffer;
 		VkCommandBuffer draw_buffer;
-		std::vector<StagingBuffer> staging_buffers;
 		TimestampQueryPool timestamp_query_pool;
 	};
 
+private:
+	VkBuffer buffer_create(VkBufferUsageFlags usage, VkDeviceSize size);
+	VkDeviceMemory buffer_allocate(VkBuffer buffer, VkMemoryPropertyFlags mem_props);
+	void buffer_copy(VkBuffer buffer, const void* data, VkDeviceSize size);
+	void buffer_memory_barrier(VkBuffer& buffer, VkBufferUsageFlags usage, VkDeviceSize offset, VkDeviceSize size);
+	std::pair<VkBuffer, VkDeviceMemory> staging_buffer_create(const void* data, size_t size);
+	void staging_buffer_destroy(VkBuffer buffer, VkDeviceMemory memory);
+
+	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
+	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
+	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
+	void vulkan_copy_buffer_to_image(VkImage image, VkBuffer buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count);
+	void image_should_have_layout(Image& image, VkImageLayout layout);
+	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
+	void staging_image_destroy(VkImage image, VkDeviceMemory memory);
+
+	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);
+
+	size_t descriptor_pool_allocate(const DescriptorPoolKey& key);
+	void descriptor_pool_free(const DescriptorPoolKey& pool_key, RenderId pool_id);
+
+private:
 	VulkanContext* m_context;
 	std::vector<Frame> m_frames;
 	size_t m_frame_index;
@@ -635,4 +650,9 @@ private:
 	std::unordered_map<SamplerId, Sampler> m_samplers;
 	std::map<DescriptorPoolKey, std::unordered_map<RenderId, DescriptorPool>> m_descriptor_pools;
 	std::unordered_map<UniformSetId, UniformSet> m_uniform_sets;
+
+	std::vector<std::function<void()>> m_actions_1;
+	std::vector<std::function<void()>> m_actions_2;
+	decltype(m_actions_1)* m_actions_after_current_frame;
+	decltype(m_actions_1)* m_actions_after_next_frame;
 };
