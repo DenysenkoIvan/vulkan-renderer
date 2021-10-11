@@ -78,7 +78,7 @@ static Wrap gltf_wrap_to_wrap(int wrap) {
 		return Wrap::Repeat;
 }
 
-static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_node, tinygltf::Model& gltf_model, std::vector<Vertex>& vertex_buffer, std::vector<uint32_t>& index_buffer) {
+static std::unique_ptr<Node> load_gltf_node(Node* parent, std::vector<MaterialId>& material_ids, tinygltf::Node& gltf_node, tinygltf::Model& gltf_model, std::vector<Vertex>& vertex_buffer, std::vector<uint32_t>& index_buffer) {
 	std::unique_ptr<Node> node = std::make_unique<Node>(parent);
 
 	if (gltf_node.translation.size() == 3)
@@ -92,7 +92,7 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 
 	node->children.reserve(gltf_node.children.size());
 	for (size_t i = 0; i < gltf_node.children.size(); i++)
-		node->children.push_back(load_gltf_node(node.get(), gltf_model.nodes[gltf_node.children[i]], gltf_model, vertex_buffer, index_buffer));
+		node->children.push_back(load_gltf_node(node.get(), material_ids, gltf_model.nodes[gltf_node.children[i]], gltf_model, vertex_buffer, index_buffer));
 
 	if (gltf_node.mesh <= -1) // Node does not contain mesh
 		return node;
@@ -208,7 +208,7 @@ static std::unique_ptr<Node> load_gltf_node(Node* parent, tinygltf::Node& gltf_n
 			.first_index = first_index,
 			.index_count = index_count,
 			.vertex_count = vertex_count,
-			.material_id = (MaterialId)gltf_primitive.material,
+			.material_id = material_ids[gltf_primitive.material],
 			.has_indices = has_indices
 		};
 
@@ -395,7 +395,7 @@ Model Application::load_gltf_model(const std::filesystem::path& filename) {
 	for (size_t i = 0; i < gltf_scene.nodes.size(); i++) {
 		tinygltf::Node& gltf_node = gltf_model.nodes[gltf_scene.nodes[i]];
 
-		model.nodes.push_back(load_gltf_node(nullptr, gltf_node, gltf_model, vertex_buffer, index_buffer));
+		model.nodes.push_back(load_gltf_node(nullptr, model.materials, gltf_node, gltf_model, vertex_buffer, index_buffer));
 	}
 
 	if (!vertex_buffer.empty())
@@ -467,15 +467,15 @@ Application::Application(const ApplicationProperties& props) {
 		.pos = light_pos,
 		.dir = glm::normalize(light_pos)
 	};
-
-	m_model = load_gltf_model("../assets/models/pony_cartoon/scene.gltf");
-
-	m_draw_skybox = true;
+	
+	m_draw_skybox = !false;
 
 	if (m_draw_skybox) {
+		const char* filename = "../assets/environment maps/abandoned_pathway_4k.hdr";
 
+#if 0
 		int width = 0, height = 0;
-		std::vector<float> skybox_pixels = load_cube_map("../assets/environment maps/abandoned_pathway_4k.hdr", width, height);
+		std::vector<float> skybox_pixels = load_cube_map(filename, width, height);
 
 		ImageSpecs skybox_texture{
 			.width = (uint32_t)width,
@@ -485,13 +485,31 @@ Application::Application(const ApplicationProperties& props) {
 			.desired_format = Format::RGBA16_SFloat
 		};
 
-		m_skybox = m_renderer.skybox_create(skybox_texture);
+		m_skybox = m_renderer.skybox_create(2048, skybox_texture, SkyboxType::Cubemap);
+#else
+		int width = 0, height = 0, channels = -1;
+		float* pixels = stbi_loadf(filename, &width, &height, &channels, STBI_rgb_alpha);
+		size_t map_size = width * height * 4 * sizeof(float);
+
+		ImageSpecs skybox_texture{
+			.width = (uint32_t)width,
+			.height = (uint32_t)height,
+			.data = pixels,
+			.data_format = Format::RGBA32_SFloat,
+			.desired_format = Format::RGBA16_SFloat
+		};
+
+		m_skybox = m_renderer.skybox_create(2048, skybox_texture, SkyboxType::Equirectangular);
+#endif
 	}
 }
 
 Application::~Application() {
-	m_renderer.materials_destroy(m_model.materials.data(), m_model.materials.size());
-	m_model.materials.clear();
+	for (auto& model : m_models) {
+		m_renderer.materials_destroy(model.materials.data(), model.materials.size());
+		model.materials.clear();
+	}
+
 	if (m_draw_skybox)
 		m_renderer.skybox_destroy(m_skybox);
 
@@ -544,6 +562,8 @@ void Application::on_event(const Event& e) {
 				m_camera_movement &= ~CameraMoveLeft;
 			else if (key_code == GLFW_KEY_D)
 				m_camera_movement &= ~CameraMoveRight;
+			else if (key_code == GLFW_KEY_L)
+				m_models.push_back(load_gltf_model("../assets/models/pony_cartoon/scene.gltf"));
 		}
 	}
 }
@@ -613,8 +633,10 @@ void Application::on_render() {
 
 	m_renderer.begin_frame(m_camera, m_directional_light, nullptr, 0);
 
-	for (const auto& node : m_model.nodes)
-		draw_node(*node, m_model, glm::mat4(1.0f));
+	for (const auto& model : m_models) {
+		for (const auto& node : model.nodes)
+			draw_node(*node, model, glm::mat4(1.0f));
+	}
 
 	if (m_draw_skybox)
 		m_renderer.draw_skybox(m_skybox);

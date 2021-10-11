@@ -152,6 +152,11 @@ struct Vertex {
 	glm::vec2 uv1;
 };
 
+enum class SkyboxType : uint32_t {
+	Cubemap,
+	Equirectangular
+};
+
 class Renderer {
 public:
 	void create(VulkanContext* context);
@@ -170,7 +175,7 @@ public:
 	void materials_create(ImageSpecs* images, uint32_t image_count, SamplerSpecs* samplers, uint32_t sampler_count, TextureSpecs* textures, uint32_t texture_count, MaterialSpecs* materials, uint32_t material_count, MaterialId* material_ids);
 	void materials_destroy(MaterialId* material_ids, size_t count);
 	
-	SkyboxId skybox_create(const ImageSpecs& texture);
+	SkyboxId skybox_create(uint32_t cubemap_resolution, const ImageSpecs& texture, SkyboxType type);
 	void skybox_destroy(SkyboxId skybox_id);
 	
 	VertexBufferId vertex_buffer_create(const Vertex* data, size_t count);
@@ -264,6 +269,13 @@ private:
 		UniformSetId uniform_set_0;
 	} m_skybox_pipeline;
 
+	struct GenerateCubemapPipeline {
+		RenderPassId render_pass;
+		ShaderId shader;
+		PipelineId pipeline;
+		SamplerId sampler;
+	} m_gen_cubemap_pipeline;
+
 	struct CoordSystemPipeline {
 		ShaderId shader;
 		PipelineId pipeline;
@@ -279,13 +291,6 @@ private:
 		SamplerId diff_res_sampler;
 		UniformSetId uniform_set_0;
 	} m_present_pipeline;
-
-	struct GenerateCubemapPipeline {
-		RenderPassId render_pass;
-		ShaderId shader;
-		PipelineId pipeline;
-		BufferId views;
-	} m_gen_cubemap_pipeline;
 
 	// Skybox
 	struct Skybox {

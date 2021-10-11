@@ -84,15 +84,21 @@ void Renderer::create(VulkanContext* context) {
 			.usage = ImageUsageTransferDst | ImageUsageColorSampled,
 			.view_type = ImageViewType::TwoD,
 			.format = Format::RGBA8_UNorm,
-			.width = 1,
-			.height = 1,
-			.depth = 1,
+			.extent = { 1, 1, 1},
+			.mip_levels = 1,
+			.array_layers = 1
+		};
+
+		ImageSubresourceLayers subres{
+			.aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+			.mip_level = 0,
+			.base_array_layer = 0,
 			.layer_count = 1
 		};
 
 		m_defaults.empty_texture.image = m_graphics_controller.image_create(empty_texture_info);
-		m_graphics_controller.image_update(m_defaults.empty_texture.image, { empty_texture_info.format, zeroes });
-
+		m_graphics_controller.image_update(m_defaults.empty_texture.image, subres, { 0, 0, 0 }, { 1, 1, 1 }, { empty_texture_info.format, zeroes });
+	
 		SamplerInfo empty_texture_sampler_info{
 			.mag_filter = Filter::Nearest,
 			.min_filter = Filter::Nearest,
@@ -111,38 +117,38 @@ void Renderer::create(VulkanContext* context) {
 		m_deferred.albedo_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.albedo_info.view_type = ImageViewType::TwoD;
 		m_deferred.albedo_info.format = Format::BGRA8_UNorm;
-		m_deferred.albedo_info.depth = 1;
-		m_deferred.albedo_info.layer_count = 1;
+		m_deferred.albedo_info.extent.depth = 1;
+		m_deferred.albedo_info.array_layers = 1;
 
 		m_deferred.ao_rough_met_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.ao_rough_met_info.view_type = ImageViewType::TwoD;
 		m_deferred.ao_rough_met_info.format = Format::BGRA8_UNorm;
-		m_deferred.ao_rough_met_info.depth = 1;
-		m_deferred.ao_rough_met_info.layer_count = 1;
+		m_deferred.ao_rough_met_info.extent.depth = 1;
+		m_deferred.ao_rough_met_info.array_layers = 1;
 
 		m_deferred.normals_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.normals_info.view_type = ImageViewType::TwoD;
 		m_deferred.normals_info.format = Format::RGBA8_SNorm;
-		m_deferred.normals_info.depth = 1;
-		m_deferred.normals_info.layer_count = 1;
+		m_deferred.normals_info.extent.depth = 1;
+		m_deferred.normals_info.array_layers = 1;
 
 		m_deferred.emissive_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.emissive_info.view_type = ImageViewType::TwoD;
 		m_deferred.emissive_info.format = Format::RGBA8_UNorm;
-		m_deferred.emissive_info.depth = 1;
-		m_deferred.emissive_info.layer_count = 1;
+		m_deferred.emissive_info.extent.depth = 1;
+		m_deferred.emissive_info.array_layers = 1;
 
 		m_deferred.depth_stencil_info.usage = ImageUsageDepthStencilAttachment | ImageUsageDepthStencilReadOnly | ImageUsageDepthSampled;
 		m_deferred.depth_stencil_info.view_type = ImageViewType::TwoD;
 		m_deferred.depth_stencil_info.format = Format::D24_UNorm_S8_UInt;
-		m_deferred.depth_stencil_info.depth = 1;
-		m_deferred.depth_stencil_info.layer_count = 1;
+		m_deferred.depth_stencil_info.extent.depth = 1;
+		m_deferred.depth_stencil_info.array_layers = 1;
 
 		m_deferred.composition_info.usage = ImageUsageColorAttachment | ImageUsageColorSampled;
 		m_deferred.composition_info.view_type = ImageViewType::TwoD;
 		m_deferred.composition_info.format = Format::RGBA16_SFloat;
-		m_deferred.composition_info.depth = 1;
-		m_deferred.composition_info.layer_count = 1;
+		m_deferred.composition_info.extent.depth = 1;
+		m_deferred.composition_info.array_layers = 1;
 
 		// G pass
 		std::array<RenderPassAttachment, 5> g_pass_attachments{};
@@ -533,15 +539,15 @@ void Renderer::create(VulkanContext* context) {
 	// Create generate cubemap pipeline
 	{
 		RenderPassAttachment gen_cubemap_attachment{
-			.previous_usage = 0,
+			.previous_usage = ImageUsageTransferSrc,
 			.current_usage = ImageUsageColorAttachment,
-			.next_usage = ImageUsageColorSampled,
-			.format = Format::RGBA32_SFloat,
+			.next_usage = ImageUsageTransferSrc,
+			.format = Format::RGBA16_SFloat,
 			.initial_action = InitialAction::Clear,
 			.final_action = FinalAction::Store
 		};
 
-		//m_gen_cubemap_pipeline.render_pass = m_graphics_controller.render_pass_create(&gen_cubemap_attachment, 1);
+		m_gen_cubemap_pipeline.render_pass = m_graphics_controller.render_pass_create(&gen_cubemap_attachment, 1);
 
 		auto vert_spv = load_spv("../assets/shaders/equirect_to_cubemap.vert.spv");
 		auto frag_spv = load_spv("../assets/shaders/equirect_to_cubemap.frag.spv");
@@ -558,23 +564,30 @@ void Renderer::create(VulkanContext* context) {
 			.spv_size = frag_spv.size()
 		};
 
-		//m_gen_cubemap_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
+		m_gen_cubemap_pipeline.shader = m_graphics_controller.shader_create(shader_stages.data(), (uint32_t)shader_stages.size());
 
-		ColorBlendAttachmentState blend_attachment;
+		ColorBlendAttachmentState blend_attachment{};
 		blend_attachment.blend_enable = false;
 		blend_attachment.color_write_mask = ColorComponentR | ColorComponentG | ColorComponentB | ColorComponentA;
 
-		std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_VIEWPORT };
+		std::array<PipelineDynamicStateFlags, 2> dynamic_states = { DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR };
 
 		PipelineInfo gen_cubemap_pi{};
-		gen_cubemap_pi.shader_id = m_g_pipeline.shader;
+		gen_cubemap_pi.shader_id = m_gen_cubemap_pipeline.shader;
 		gen_cubemap_pi.dynamic_states.dynamic_state_count = (uint32_t)dynamic_states.size();
 		gen_cubemap_pi.dynamic_states.dynamic_states = dynamic_states.data();
-		gen_cubemap_pi.color_blend.attachment_count = 1;
 		gen_cubemap_pi.color_blend.attachments = &blend_attachment;
+		gen_cubemap_pi.color_blend.attachment_count = 1;
 		gen_cubemap_pi.render_pass_id = m_gen_cubemap_pipeline.render_pass;
 
-		//m_gen_cubemap_pipeline.pipeline = m_graphics_controller.pipeline_create(gen_cubemap_pi);
+		m_gen_cubemap_pipeline.pipeline = m_graphics_controller.pipeline_create(gen_cubemap_pi);
+
+		SamplerInfo sampler_info{
+			.anisotropy_enable = true,
+			.max_anisotropy = 16.0f
+		};
+
+		m_gen_cubemap_pipeline.sampler = m_graphics_controller.sampler_create(sampler_info);
 	}
 
 	// Create default shapes
@@ -606,35 +619,35 @@ void Renderer::create(VulkanContext* context) {
 			 1.0f,  1.0f, -1.0f,
 			 1.0f, -1.0f, -1.0f,
 
-			 // Far plane
+			// Far plane
 			-1.0f, -1.0f,  1.0f,
 			-1.0f,  1.0f,  1.0f,
 			 1.0f,  1.0f,  1.0f,
 			 1.0f, -1.0f,  1.0f,
 
-			 // Left plane
-			  -1.0f, -1.0f, -1.0f,
-			  -1.0f, -1.0f,  1.0f,
-			  -1.0f,  1.0f,  1.0f,
-			  -1.0f,  1.0f, -1.0f,
+			// Left plane
+			-1.0f, -1.0f, -1.0f,
+			-1.0f, -1.0f,  1.0f,
+			-1.0f,  1.0f,  1.0f,
+			-1.0f,  1.0f, -1.0f,
 
-			  // Right plane
-			   1.0f, -1.0f, -1.0f,
-			   1.0f, -1.0f,  1.0f,
-			   1.0f,  1.0f,  1.0f,
-			   1.0f,  1.0f, -1.0f,
+			// Right plane
+			1.0f, -1.0f, -1.0f,
+			1.0f, -1.0f,  1.0f,
+			1.0f,  1.0f,  1.0f,
+			1.0f,  1.0f, -1.0f,
 
-			   // Bottom plane
-			   -1.0f, -1.0f, -1.0f,
-			   -1.0f, -1.0f,  1.0f,
-				1.0f, -1.0f,  1.0f,
-				1.0f, -1.0f, -1.0f,
+			// Bottom plane
+			-1.0f, -1.0f, -1.0f,
+			-1.0f, -1.0f,  1.0f,
+			 1.0f, -1.0f,  1.0f,
+			 1.0f, -1.0f, -1.0f,
 
-				// Top plane
-				-1.0f,  1.0f, -1.0f,
-				-1.0f,  1.0f,  1.0f,
-				 1.0f,  1.0f,  1.0f,
-				 1.0f,  1.0f, -1.0f
+			// Top plane
+			-1.0f,  1.0f, -1.0f,
+			-1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f, -1.0f
 		};
 
 		m_box.index_count = 36;
@@ -708,27 +721,27 @@ void Renderer::destroy() {
 
 void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	// Albedo
-	m_deferred.albedo_info.width = width;
-	m_deferred.albedo_info.height = height;
+	m_deferred.albedo_info.extent.width = width;
+	m_deferred.albedo_info.extent.height = height;
 	m_deferred.albedo = m_graphics_controller.image_create(m_deferred.albedo_info);
 
 	// Ao-rough-met
-	m_deferred.ao_rough_met_info.width = width;
-	m_deferred.ao_rough_met_info.height = height;
+	m_deferred.ao_rough_met_info.extent.width = width;
+	m_deferred.ao_rough_met_info.extent.height = height;
 	m_deferred.ao_rough_met = m_graphics_controller.image_create(m_deferred.ao_rough_met_info);
 
 	// Normals
-	m_deferred.normals_info.width = width;
-	m_deferred.normals_info.height = height;
+	m_deferred.normals_info.extent.width = width;
+	m_deferred.normals_info.extent.height = height;
 	m_deferred.normals = m_graphics_controller.image_create(m_deferred.normals_info);
 
-	m_deferred.emissive_info.width = width;
-	m_deferred.emissive_info.height = height;
+	m_deferred.emissive_info.extent.width = width;
+	m_deferred.emissive_info.extent.height = height;
 	m_deferred.emissive = m_graphics_controller.image_create(m_deferred.emissive_info);
 
 	// Depth/stencil
-	m_deferred.depth_stencil_info.width = width;
-	m_deferred.depth_stencil_info.height = height;
+	m_deferred.depth_stencil_info.extent.width = width;
+	m_deferred.depth_stencil_info.extent.height = height;
 	m_deferred.depth_stencil = m_graphics_controller.image_create(m_deferred.depth_stencil_info);
 
 	// G framebuffer
@@ -736,8 +749,8 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	m_deferred.g_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.g_pass, g_fb_ids.data(), (uint32_t)g_fb_ids.size());
 
 	// Composition
-	m_deferred.composition_info.width = width;
-	m_deferred.composition_info.height = height;
+	m_deferred.composition_info.extent.width = width;
+	m_deferred.composition_info.extent.height = height;
 	m_deferred.composition = m_graphics_controller.image_create(m_deferred.composition_info);
 
 	RenderId albedo_ids[2] = { m_deferred.albedo, m_light_pipeline.sampler };
@@ -748,27 +761,27 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 
 	std::array<UniformInfo, 5> light_set_0_bindings{};
 	light_set_0_bindings[0].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[0].image_usage = ImageUsageColorSampled;
+	light_set_0_bindings[0].subresource_range = { ImageAspectColor };
 	light_set_0_bindings[0].binding = 0;
 	light_set_0_bindings[0].ids = albedo_ids;
 	light_set_0_bindings[0].id_count = 2;
 	light_set_0_bindings[1].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[1].image_usage = ImageUsageColorSampled;
+	light_set_0_bindings[1].subresource_range = { ImageAspectColor };
 	light_set_0_bindings[1].binding = 1;
 	light_set_0_bindings[1].ids = ao_rough_met_ids;
 	light_set_0_bindings[1].id_count = 2;
 	light_set_0_bindings[2].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[2].image_usage = ImageUsageColorSampled;
+	light_set_0_bindings[2].subresource_range = { ImageAspectColor };
 	light_set_0_bindings[2].binding = 2;
 	light_set_0_bindings[2].ids = normal_ids;
 	light_set_0_bindings[2].id_count = 2;
 	light_set_0_bindings[3].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[3].image_usage = ImageUsageColorSampled;
+	light_set_0_bindings[3].subresource_range = { ImageAspectColor };
 	light_set_0_bindings[3].binding = 3;
 	light_set_0_bindings[3].ids = emissive_ids;
 	light_set_0_bindings[3].id_count = 2;
 	light_set_0_bindings[4].type = UniformType::CombinedImageSampler;
-	light_set_0_bindings[4].image_usage = ImageUsageDepthSampled;
+	light_set_0_bindings[4].subresource_range = { ImageAspectDepth };
 	light_set_0_bindings[4].binding = 4;
 	light_set_0_bindings[4].ids = depth_ids;
 	light_set_0_bindings[4].id_count = 2;
@@ -780,8 +793,8 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 	m_deferred.composition_framebuffer = m_graphics_controller.framebuffer_create(m_deferred.composition_pass, composition_fb_ids.data(), (uint32_t)composition_fb_ids.size());
 
 	SamplerId sampler;
-	if (m_deferred.composition_info.width == m_graphics_controller.screen_resolution().width &&
-		m_deferred.composition_info.height == m_graphics_controller.screen_resolution().height)
+	if (m_deferred.composition_info.extent.width == m_graphics_controller.screen_resolution().width &&
+		m_deferred.composition_info.extent.height == m_graphics_controller.screen_resolution().height)
 		sampler = m_present_pipeline.same_res_sampler;
 	else
 		sampler = m_present_pipeline.diff_res_sampler;
@@ -790,7 +803,7 @@ void Renderer::set_resolution(uint32_t width, uint32_t height) {
 
 	UniformInfo present_uniform_set_0{
 		.type = UniformType::CombinedImageSampler,
-		.image_usage = ImageUsageColorSampled,
+		.subresource_range = { ImageAspectColor },
 		.binding = 0,
 		.ids = present_set_0_bindind_0,
 		.id_count = 2
@@ -865,20 +878,20 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 
 	{
 		MY_PROFILE_SCOPE("Render list sorting");
-	
+
 		std::sort(m_draw_list.opaque_primitives.begin(), m_draw_list.opaque_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
 			return primitive1.material < primitive2.material;
-			});
+		});
 
 		std::sort(m_draw_list.blend_primitives.begin(), m_draw_list.blend_primitives.end(), [](const auto& primitive1, const auto& primitive2) {
 			return primitive1.material < primitive2.material;
-			});
+		});
 	}
 
 	uint64_t timestamps[2] = { 0 };
 	bool timestamps_are_available = m_graphics_controller.timestamp_query_get_results(timestamps, 2);
 	if (timestamps_are_available)
-		std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1000000 << "ms\n";
+		std::cout << "GPU time: " << (float)(timestamps[1] - timestamps[0]) / 1'000'000 << "ms\n";
 
 	m_graphics_controller.timestamp_query_begin();
 	m_graphics_controller.timestamp_query_write_timestamp();
@@ -896,8 +909,8 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 		g_buffer_clear_values[4].depth_stencil = { 1.0f, 0 }; // depth-stencil
 
 		m_graphics_controller.draw_begin(m_deferred.g_framebuffer, g_buffer_clear_values.data(), (uint32_t)g_buffer_clear_values.size());
-		m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.albedo_info.width, (float)m_deferred.albedo_info.height, 0.0f, 1.0f);
-		m_graphics_controller.draw_set_scissor(0, 0, m_deferred.albedo_info.width, m_deferred.albedo_info.height);
+		m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.albedo_info.extent.width, (float)m_deferred.albedo_info.extent.height, 0.0f, 1.0f);
+		m_graphics_controller.draw_set_scissor(0, 0, m_deferred.albedo_info.extent.width, m_deferred.albedo_info.extent.height);
 
 		m_graphics_controller.draw_bind_pipeline(m_g_pipeline.pipeline);
 		m_graphics_controller.draw_bind_uniform_sets(m_g_pipeline.pipeline, 0, &m_g_pipeline.uniform_set_0, 1);
@@ -907,30 +920,30 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 		BufferId prev_vertex_buffer = -1;
 		BufferId prev_index_buffer = -1;
 		for (const Primitive& primitive : m_draw_list.opaque_primitives) {
-		// If material changed, bind new material
-		if (primitive.material != prev_material) {
-			const Material& material = m_materials[primitive.material];
+			// If material changed, bind new material
+			if (primitive.material != prev_material) {
+				const Material& material = m_materials[primitive.material];
 
-			m_graphics_controller.draw_push_constants(m_g_pipeline.shader, ShaderStageFragment, sizeof(glm::mat4), sizeof(MaterialInfo), &material.info);
-			m_graphics_controller.draw_bind_uniform_sets(m_g_pipeline.pipeline, 1, &material.uniform_set, 1);
+				m_graphics_controller.draw_push_constants(m_g_pipeline.shader, ShaderStageFragment, sizeof(glm::mat4), sizeof(MaterialInfo), &material.info);
+				m_graphics_controller.draw_bind_uniform_sets(m_g_pipeline.pipeline, 1, &material.uniform_set, 1);
+			}
+			// If vertex buffer changed, bind new vertex buffer
+			if (primitive.vertex_buffer != prev_vertex_buffer)
+				m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffers[primitive.vertex_buffer]);
+			// If index buffer changed, bind new index buffer
+			if (primitive.index_buffer != prev_index_buffer)
+				m_graphics_controller.draw_bind_index_buffer(m_index_buffers[primitive.index_buffer], IndexType::Uint32);
+
+			m_graphics_controller.draw_push_constants(m_g_pipeline.shader, ShaderStageVertex, 0, sizeof(glm::mat4), &primitive.model);
+
+			if (primitive.index_buffer != -1 && primitive.index_count != 0) {
+				m_graphics_controller.draw_draw_indexed((uint32_t)primitive.index_count, (uint32_t)primitive.first_index);
+				prev_index_buffer = primitive.index_buffer;
+			}
+
+			prev_material = primitive.material;
+			prev_vertex_buffer = primitive.vertex_buffer;
 		}
-		// If vertex buffer changed, bind new vertex buffer
-		if (primitive.vertex_buffer != prev_vertex_buffer)
-			m_graphics_controller.draw_bind_vertex_buffer(m_vertex_buffers[primitive.vertex_buffer]);
-		// If index buffer changed, bind new index buffer
-		if (primitive.index_buffer != prev_index_buffer)
-			m_graphics_controller.draw_bind_index_buffer(m_index_buffers[primitive.index_buffer], IndexType::Uint32);
-
-		m_graphics_controller.draw_push_constants(m_g_pipeline.shader, ShaderStageVertex, 0, sizeof(glm::mat4), &primitive.model);
-
-		if (primitive.index_buffer != -1 && primitive.index_count != 0) {
-			m_graphics_controller.draw_draw_indexed((uint32_t)primitive.index_count, (uint32_t)primitive.first_index);
-			prev_index_buffer = primitive.index_buffer;
-		}
-
-		prev_material = primitive.material;
-		prev_vertex_buffer = primitive.vertex_buffer;
-	}
 
 		m_graphics_controller.draw_end();
 	}
@@ -940,8 +953,8 @@ void Renderer::end_frame(uint32_t width, uint32_t height) {
 	composition_clear_values[0].color = { 0.0f, 1.0f, 1.0f, 1.0f };
 
 	m_graphics_controller.draw_begin(m_deferred.composition_framebuffer, composition_clear_values.data(), (uint32_t)composition_clear_values.size());
-	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.composition_info.width, (float)m_deferred.composition_info.height, 0.0f, 1.0f);
-	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.composition_info.width, m_deferred.composition_info.height);
+	m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)m_deferred.composition_info.extent.width, (float)m_deferred.composition_info.extent.height, 0.0f, 1.0f);
+	m_graphics_controller.draw_set_scissor(0, 0, m_deferred.composition_info.extent.width, m_deferred.composition_info.extent.height);
 
 	{
 		MY_PROFILE_SCOPE("Lightning recording");
@@ -1077,16 +1090,24 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 	image_ids.reserve(image_count);
 
 	for (uint32_t i = 0; i < image_count; i++) {
+		Extent3D extent{ images[i].width, images[i].height, 1 };
+
 		ImageInfo info{
 			.usage = ImageUsageTransferDst | ImageUsageColorSampled,
 			.format = Format::RGBA8_SRGB,
-			.width = images[i].width,
-			.height = images[i].height
+			.extent = extent
+		};
+
+		ImageSubresourceLayers subresource{
+			.aspect = ImageAspectColor,
+			.mip_level = 0,
+			.base_array_layer = 0,
+			.layer_count = 1
 		};
 
 		ImageId id = m_graphics_controller.image_create(info);
-		m_graphics_controller.image_update(id, { info.format, images[i].data });
-
+		m_graphics_controller.image_update(id, subresource, { 0, 0, 0 }, extent, { .format = images[i].data_format, .data = images[i].data });
+		
 		m_image_usage_counts[id] = 0;
 
 		image_ids.push_back(id);
@@ -1118,20 +1139,20 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 			.alpha_mode = materials[i].alpha_mode
 		};
 
-		RenderId albedo_map_ids[2] = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
-		RenderId ao_rough_met_map_ids[2] = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
-		RenderId normal_map_ids[2] = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
-		RenderId emissive_map_ids[2] = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
+		Texture albedo_map_texture = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
+		Texture ao_rough_met_map_texture = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
+		Texture normal_map_texture = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
+		Texture emissive_map_texture = { m_defaults.empty_texture.image, m_defaults.empty_texture.sampler };
 
 		std::array<UniformInfo, 4> uniforms;
-		uniforms[0].ids = albedo_map_ids;
-		uniforms[1].ids = ao_rough_met_map_ids;
-		uniforms[2].ids = normal_map_ids;
-		uniforms[3].ids = emissive_map_ids;
+		uniforms[0].ids = (RenderId*)&albedo_map_texture;
+		uniforms[1].ids = (RenderId*)&ao_rough_met_map_texture;
+		uniforms[2].ids = (RenderId*)&normal_map_texture;
+		uniforms[3].ids = (RenderId*)&emissive_map_texture;
 
 		for (uint32_t j = 0; j < 4; j++) {
 			uniforms[j].binding = j;
-			uniforms[j].image_usage = ImageUsageColorSampled;
+			uniforms[j].subresource_range = { ImageAspectColor };
 			uniforms[j].type = UniformType::CombinedImageSampler;
 			uniforms[j].id_count = 2;
 		}
@@ -1143,13 +1164,13 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 			ImageId image_id = image_ids[tex_specs.image_id];
 			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			albedo_map_ids[0] = image_id;
-			albedo_map_ids[1] = sampler_id;
+			albedo_map_texture.image = image_id;
+			albedo_map_texture.sampler = sampler_id;
 
 			m_image_usage_counts[image_id]++;
 			m_sampler_usage_counts[sampler_id]++;
 
-			material.albedo = { image_id, sampler_id };
+			material.albedo = albedo_map_texture;
 		};
 		if (materials[i].ao_rough_met_id.has_value()) {
 			uint32_t texture_id = materials[i].ao_rough_met_id.value();
@@ -1158,13 +1179,13 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 			ImageId image_id = image_ids[tex_specs.image_id];
 			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			ao_rough_met_map_ids[0] = image_id;
-			ao_rough_met_map_ids[1] = sampler_id;
+			ao_rough_met_map_texture.image = image_id;
+			ao_rough_met_map_texture.sampler = sampler_id;
 
 			m_image_usage_counts[image_id]++;
 			m_sampler_usage_counts[sampler_id]++;
 
-			material.ao_rough_met = { image_id, sampler_id };
+			material.ao_rough_met = ao_rough_met_map_texture;
 		}
 		if (materials[i].normals_id.has_value()) {
 			uint32_t texture_id = materials[i].normals_id.value();
@@ -1173,13 +1194,13 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 			ImageId image_id = image_ids[tex_specs.image_id];
 			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			normal_map_ids[0] = image_id;
-			normal_map_ids[1] = sampler_id;
+			normal_map_texture.image = image_id;
+			normal_map_texture.sampler = sampler_id;
 
 			m_image_usage_counts[image_id]++;
 			m_sampler_usage_counts[sampler_id]++;
 
-			material.normal = { image_id, sampler_id };
+			material.normal = normal_map_texture;
 		}
 		if (materials[i].emissive_id.has_value()) {
 			uint32_t texture_id = materials[i].emissive_id.value();
@@ -1188,13 +1209,13 @@ void Renderer::materials_create(ImageSpecs* images, uint32_t image_count, Sample
 			ImageId image_id = image_ids[tex_specs.image_id];
 			SamplerId sampler_id = sampler_ids[tex_specs.sampler_id];
 
-			emissive_map_ids[0] = image_id;
-			emissive_map_ids[1] = sampler_id;
+			emissive_map_texture.image = image_id;
+			emissive_map_texture.sampler = sampler_id;
 
 			m_image_usage_counts[image_id]++;
 			m_sampler_usage_counts[sampler_id]++;
 
-			material.emissive = { image_id, sampler_id };
+			material.emissive = emissive_map_texture;
 		}
 
 		ShaderId shader_id = materials[i].alpha_mode == AlphaMode::Blend ? m_blend_pipeline.shader : m_g_pipeline.shader;
@@ -1218,36 +1239,135 @@ void Renderer::materials_destroy(MaterialId* material_ids, size_t count) {
 	}
 }
 
-SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
+SkyboxId Renderer::skybox_create(uint32_t cubemap_resolution, const ImageSpecs& texture, SkyboxType type) {
+	Extent3D cubemap_extent{ cubemap_resolution, cubemap_resolution, 1 };
+	
 	ImageInfo skybox_texture_info = {
 		.usage = ImageUsageColorSampled | ImageUsageTransferDst,
 		.view_type = ImageViewType::Cube,
 		.format = texture.desired_format,
-		.width = (uint32_t)texture.height,
-		.height = (uint32_t)texture.width / 6,
-		.depth = 1,
-		.layer_count = 6
+		.extent = cubemap_extent,
+		.array_layers = 6
 	};
 
 	ImageId id = m_graphics_controller.image_create(skybox_texture_info);
 	m_image_usage_counts[id]++;
+	
+	if (type == SkyboxType::Cubemap) {
+		ImageSubresourceLayers subresource{
+			.aspect = ImageAspectColor,
+			.mip_level = 0,
+			.base_array_layer = 0,
+			.layer_count = 6
+		};
 
-	m_graphics_controller.image_update(id, { texture.data_format,  texture.data });
+		m_graphics_controller.image_update(id, subresource, { 0, 0, 0 }, cubemap_extent, { texture.data_format, texture.data });
+	} else if (type == SkyboxType::Equirectangular) {
+		Extent3D equirect_image_extent{ texture.width, texture.height, 1 };
+		
+		ImageInfo equirect_image_info{
+			.usage = ImageUsageColorAttachment | ImageUsageColorSampled | ImageUsageTransferSrc | ImageUsageTransferDst,
+			.format = texture.data_format,
+			.extent = equirect_image_extent
+		};
+		
+		ImageId equirect_image = m_graphics_controller.image_create(equirect_image_info);
+		
+		ImageSubresourceLayers equirect_image_subres{
+			.aspect = ImageAspectColor,
+			.mip_level = 0,
+			.base_array_layer = 0,
+			.layer_count = 1
+		};
 
+		ImageDataInfo image_data_info{
+			.format = texture.data_format,
+			.data = texture.data
+		};
+
+		m_graphics_controller.image_update(equirect_image, equirect_image_subres, { 0, 0, 0 }, equirect_image_extent, image_data_info);
+
+		ImageInfo equirectangular_image_info{
+			.usage = ImageUsageColorAttachment | ImageUsageTransferSrc,
+			.format = texture.desired_format,
+			.extent = cubemap_extent,
+			.array_layers = 1
+		};
+
+		ImageId cubemap_plane = m_graphics_controller.image_create(equirectangular_image_info);
+
+		ImageCopy image_copy{
+			.src_subresource = {.aspect = ImageAspectColor, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
+			.src_offset = { 0, 0, 0 },
+			.dst_subresource = {.aspect = ImageAspectColor, .mip_level = 0, .layer_count = 1 },
+			.dst_offset = { 0, 0, 0 },
+			.extent = cubemap_extent
+		};
+
+		FramebufferId skybox_framebuffer = m_graphics_controller.framebuffer_create(m_gen_cubemap_pipeline.render_pass, &cubemap_plane, 1);
+
+		glm::mat4 views[6] =
+		{
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f,  0.0f,  1.0f)),
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f,  0.0f, -1.0f)),
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+		   glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, -1.0f,  0.0f))
+		};
+
+		glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+
+		RenderId ids[2] = { equirect_image, m_gen_cubemap_pipeline.sampler };
+
+		UniformInfo uniform_info{
+			.type = UniformType::CombinedImageSampler,
+			.subresource_range = { ImageAspectColor },
+			.binding = 0,
+			.ids = ids,
+			.id_count = 2
+		};
+
+		UniformSetId uniform_set = m_graphics_controller.uniform_set_create(m_gen_cubemap_pipeline.shader, 0, &uniform_info, 1);
+
+		for (int i = 0; i < 6; i++) {
+			ClearValue clear_value{ .color = { 0.0f, 0.0f, 0.0f, 0.0f } };
+			m_graphics_controller.draw_begin(skybox_framebuffer, &clear_value, 1);
+			m_graphics_controller.draw_set_viewport(0.0f, 0.0f, (float)cubemap_resolution, (float)cubemap_resolution, 0.0f, 1.0f);
+			m_graphics_controller.draw_set_scissor(0, 0, cubemap_resolution, cubemap_resolution);
+
+			char buffers[128];
+			memcpy(buffers, &proj, sizeof(glm::mat4));
+			memcpy(buffers + sizeof(glm::mat4), &views[i], sizeof(glm::mat4));
+
+			m_graphics_controller.draw_bind_vertex_buffer(m_box.vertex_buffer);
+			m_graphics_controller.draw_bind_index_buffer(m_box.index_buffer, m_box.index_type);
+			m_graphics_controller.draw_bind_pipeline(m_gen_cubemap_pipeline.pipeline);
+			m_graphics_controller.draw_push_constants(m_gen_cubemap_pipeline.shader, ShaderStageVertex, 0, 2 * sizeof(glm::mat4), buffers);
+			m_graphics_controller.draw_bind_uniform_sets(m_gen_cubemap_pipeline.pipeline, 0, &uniform_set, 1);
+			m_graphics_controller.draw_draw_indexed(m_box.index_count, 0);
+
+			m_graphics_controller.draw_end();
+
+			image_copy.dst_subresource.base_array_layer = i;
+
+			m_graphics_controller.image_copy(cubemap_plane, id, image_copy);
+		}
+
+		m_graphics_controller.framebuffer_destroy(skybox_framebuffer);
+	}
+	
 	RenderId texture_ids[2] = { id, m_skybox_pipeline.sampler };
 
 	UniformInfo skybox_texture_uniform{
 		.type = UniformType::CombinedImageSampler,
-		.image_usage = ImageUsageColorSampled,
+		.subresource_range = { .aspect = ImageAspectColor, .layer_count = 6 },
 		.binding = 0,
 		.ids = texture_ids,
 		.id_count = 2
 	};
 
-	Skybox skybox{
-		.image = id,
-		.uniform_set_1 = m_graphics_controller.uniform_set_create(m_skybox_pipeline.shader, 1, &skybox_texture_uniform, 1)
-	};
+	Skybox skybox{ id, m_graphics_controller.uniform_set_create(m_skybox_pipeline.shader, 1, &skybox_texture_uniform, 1) };
 
 	m_skyboxes[m_render_id] = std::move(skybox);
 	return m_render_id++;
@@ -1255,7 +1375,7 @@ SkyboxId Renderer::skybox_create(const ImageSpecs& texture) {
 
 void Renderer::skybox_destroy(SkyboxId skybox_id) {
 	Skybox& skybox = m_skyboxes.at(skybox_id);
-	
+
 	clear_image(skybox.image);
 	m_graphics_controller.uniform_set_destroy(skybox.uniform_set_1);
 
@@ -1284,7 +1404,7 @@ IndexBufferId Renderer::index_buffer_create(const uint32_t* data, size_t count) 
 
 void Renderer::material_destroy(MaterialId material_id) {
 	Material& material = m_materials.at(material_id);
-	
+
 	if (material.albedo.has_value()) {
 		clear_image(material.albedo->image);
 		clear_sampler(material.albedo->sampler);
@@ -1303,17 +1423,25 @@ void Renderer::material_destroy(MaterialId material_id) {
 void Renderer::clear_image(ImageId image_id) {
 	size_t& image_count = m_image_usage_counts.at(image_id);
 
-	if (image_count == 0) {
+	if (image_count == 0)
+		return;
+	else if (image_count == 1) {
+		image_count = 0;
 		m_graphics_controller.image_destroy(image_id);
 		m_image_usage_counts.erase(image_id);
-	}
+	} else
+		image_count--;
 }
 
 void Renderer::clear_sampler(SamplerId sampler_id) {
 	size_t& sampler_count = m_sampler_usage_counts.at(sampler_id);
 
-	if (sampler_count == 0) {
+	if (sampler_count == 0)
+		return;
+	if (sampler_count == 1) {
+		sampler_count = 0;
 		m_graphics_controller.sampler_destroy(sampler_id);
 		m_sampler_usage_counts.erase(sampler_id);
-	}
+	} else
+		sampler_count--;
 }

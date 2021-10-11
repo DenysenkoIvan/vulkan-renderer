@@ -262,14 +262,61 @@ struct PipelineInfo {
 	std::optional<RenderPassId> render_pass_id;
 };
 
+enum ImageAspectFlagBits {
+	ImageAspectColor = 1,
+	ImageAspectDepth = 2,
+	ImageAspectStencil = 4
+};
+using ImageAspectFlags = uint32_t;
+
+struct ImageSubresource {
+	ImageAspectFlags aspect;
+	uint32_t mip_level = 0;
+	uint32_t array_layer = 0;
+};
+
+struct ImageSubresourceLayers {
+	ImageAspectFlags aspect;
+	uint32_t mip_level = 0;
+	uint32_t base_array_layer = 0;
+	uint32_t layer_count = 1;
+};
+
+struct ImageSubresourceRange {
+	ImageAspectFlags aspect;
+	uint32_t base_mip_level = 0;
+	uint32_t level_count = 1;
+	uint32_t base_array_layer = 0;
+	uint32_t layer_count = 1;
+};
+
+struct Extent3D {
+	uint32_t width;
+	uint32_t height;
+	uint32_t depth = 1;
+};
+
+struct Offset3D {
+	int32_t x = 0;
+	int32_t y = 0;
+	int32_t z = 0;
+};
+
+struct ImageCopy {
+	ImageSubresourceLayers src_subresource;
+	Offset3D src_offset;
+	ImageSubresourceLayers dst_subresource;
+	Offset3D dst_offset;
+	Extent3D extent;
+};
+
 struct ImageInfo {
 	ImageUsageFlags usage;
 	ImageViewType view_type = ImageViewType::TwoD;
 	Format format;
-	uint32_t width;
-	uint32_t height;
-	uint32_t depth = 1;
-	uint32_t layer_count = 1;
+	Extent3D extent;
+	uint32_t mip_levels = 1;
+	uint32_t array_layers = 1;
 };
 
 struct ImageDataInfo {
@@ -304,7 +351,7 @@ enum class UniformType : uint32_t {
 
 struct UniformInfo {
 	UniformType type;
-	ImageUsageFlags image_usage; // In case uniform is texture
+	ImageSubresourceRange subresource_range; // In case uniform is a texture
 	uint32_t binding;
 	const RenderId* ids;
 	uint32_t id_count;
@@ -426,7 +473,9 @@ public:
 	void buffer_destroy(BufferId buffer_id);
 
 	ImageId image_create(const ImageInfo& info);
-	void image_update(ImageId image_id, const ImageDataInfo& image_data_info);
+	void image_update(ImageId image_id, const ImageSubresourceLayers& image_subresource, Offset3D image_offset, Extent3D image_extent, const ImageDataInfo& image_data_info);
+	void image_copy(ImageId src_image_id, ImageId dst_image_id, const ImageCopy& image_copy);
+	void image_blit();
 	void image_destroy(ImageId image_id);
 
 	SamplerId sampler_create(const SamplerInfo& info);
@@ -621,12 +670,13 @@ private:
 	std::pair<VkBuffer, VkDeviceMemory> staging_buffer_create(const void* data, size_t size);
 	void staging_buffer_destroy(VkBuffer buffer, VkDeviceMemory memory);
 
-	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
+	VkImage vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t mip_levels, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage);
 	VkDeviceMemory vulkan_image_allocate(VkImage image, VkMemoryPropertyFlags mem_props);
-	VkImageView image_view_create(const Image& image, ImageUsageFlags image_usage);
-	void vulkan_copy_buffer_to_image(VkImage image, VkBuffer buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count);
+	VkImageView vulkan_image_view_create(VkImage image, VkImageViewType view_type, VkFormat format, const VkImageSubresourceRange& subresource_range);
+	void vulkan_copy_buffer_to_image(VkBuffer buffer, VkImage image, VkImageLayout layout, const VkImageSubresourceLayers& image_subresource, VkOffset3D offset, VkExtent3D extent);
+	void vulkan_copy_image_to_image(VkImage src_image, VkImageLayout src_image_layout, const VkImageSubresourceLayers& src_subres, const VkOffset3D& src_offset, VkImage dst_image, VkImageLayout dst_image_layout, const VkImageSubresourceLayers& dst_subres, const VkOffset3D& dst_offset, const VkExtent3D& extent);
 	void image_should_have_layout(Image& image, VkImageLayout layout);
-	void vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count);
+	void vulkan_image_memory_barrier(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, const VkImageSubresourceRange& image_subresource);
 	void staging_image_destroy(VkImage image, VkDeviceMemory memory);
 
 	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);

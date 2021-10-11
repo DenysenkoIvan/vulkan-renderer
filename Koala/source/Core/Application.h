@@ -96,5 +96,5 @@ private:
 
 	bool m_draw_skybox = true;
 	SkyboxId m_skybox;
-	Model m_model;
+	std::vector<Model> m_models;
 };

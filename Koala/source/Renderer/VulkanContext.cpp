@@ -618,7 +618,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debug_callback(
 	VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 	VkDebugUtilsMessageTypeFlagsEXT messageType,
 	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-	void* pUserData) {
+	void* pUserData)
+{
 	// TODO: Error logging
 	std::cout << pCallbackData->pMessage << '\n';
 

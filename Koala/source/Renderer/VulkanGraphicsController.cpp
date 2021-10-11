@@ -247,6 +247,41 @@ static VkImageUsageFlags image_usage_to_vk_image_usage(ImageUsageFlags usage) {
 	return vk_usage;
 }
 
+static VkImageSubresourceLayers ImageSubresourceLayers_to_VkImageSubresourceLayers(const ImageSubresourceLayers& subres) {
+	return {
+		.aspectMask = (VkImageAspectFlags)subres.aspect,
+		.mipLevel = subres.mip_level,
+		.baseArrayLayer = subres.base_array_layer,
+		.layerCount = subres.layer_count
+	};
+}
+
+static VkImageSubresourceRange ImageSubresourceRange_to_VkImageSubresourceRange(const ImageSubresourceRange& range) {
+	return {
+		.aspectMask = (VkImageAspectFlags)range.aspect,
+		.baseMipLevel = range.base_mip_level,
+		.levelCount = range.level_count,
+		.baseArrayLayer = range.base_array_layer,
+		.layerCount = range.layer_count
+	};
+};
+
+static VkOffset3D Offset3D_to_VkOffset3D(const Offset3D& offset) {
+	return {
+		.x = offset.x,
+		.y = offset.y,
+		.z = offset.z
+	};
+}
+
+static VkExtent3D Extent3D_to_VkExtent3D(const Extent3D& extent) {
+	return {
+		.width = extent.width,
+		.height = extent.height,
+		.depth = extent.depth
+	};
+}
+
 void VulkanGraphicsController::create(VulkanContext* context) {
 	MY_PROFILE_FUNCTION();
 
@@ -653,8 +688,8 @@ void VulkanGraphicsController::render_pass_destroy(RenderPassId render_pass_id) 
 FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_pass_id, const ImageId* ids, uint32_t count) {
 	RenderPass& render_pass = m_render_passes.at(render_pass_id);
 
-	uint32_t width = m_images.at(ids[0]).info.width;
-	uint32_t height = m_images.at(ids[0]).info.height;
+	uint32_t width = m_images.at(ids[0]).info.extent.width;
+	uint32_t height = m_images.at(ids[0]).info.extent.height;
 
 	Framebuffer framebuffer{
 		.render_pass_id = render_pass_id,
@@ -669,7 +704,15 @@ FramebufferId VulkanGraphicsController::framebuffer_create(RenderPassId render_p
 		
 		const Image& image = m_images.at(ids[i]);
 		
-		framebuffer.image_views.push_back(image_view_create(image, image.info.usage));
+		VkImageSubresourceRange subresource_range{
+			.aspectMask = image.full_aspect,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1
+		};
+
+		framebuffer.image_views.push_back(vulkan_image_view_create(image.image, (VkImageViewType)image.info.view_type, (VkFormat)image.info.format, subresource_range));
 	}
 
 	VkFramebufferCreateInfo framebuffer_info{
@@ -1123,7 +1166,7 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 	MY_PROFILE_FUNCTION();
 
 	VkFormat vk_format = (VkFormat)info.format;
-	VkDeviceSize size = vk_format_to_size(vk_format) * info.width * info.height * info.depth * info.layer_count;
+	VkDeviceSize size = vk_format_to_size(vk_format) * info.extent.width * info.extent.height * info.extent.depth * info.array_layers;
 
 	VkImageUsageFlags image_usage = image_usage_to_vk_image_usage(info.usage);
 	VkMemoryPropertyFlags mem_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -1137,7 +1180,7 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 
 	Image image{
 		.info = info,
-		.image = vulkan_image_create(info.view_type, vk_format, { info.width, info.height, info.depth }, info.layer_count, tiling, image_usage),
+		.image = vulkan_image_create(info.view_type, vk_format, { info.extent.width, info.extent.height, info.extent.depth }, info.mip_levels, info.array_layers, tiling, image_usage),
 		.memory = vulkan_image_allocate(image.image, mem_props),
 		.current_layout = VK_IMAGE_LAYOUT_UNDEFINED,
 		.full_aspect = vk_format_to_aspect(vk_format),
@@ -1148,53 +1191,116 @@ ImageId VulkanGraphicsController::image_create(const ImageInfo& info) {
 	return m_render_id++;
 }
 
-void VulkanGraphicsController::image_update(ImageId image_id, const ImageDataInfo& image_data_info) {
+void VulkanGraphicsController::image_update(ImageId image_id, const ImageSubresourceLayers& image_subresource, Offset3D image_offset, Extent3D image_extent, const ImageDataInfo& image_data_info) {
 	MY_PROFILE_FUNCTION(); 
 	
-	const Image& image = m_images.at(image_id);
+	Image& image = m_images.at(image_id);
 	const ImageInfo& image_info = image.info;
 
-	VkExtent3D extent = { image_info.width, image_info.height, image_info.depth };
-	size_t image_data_size = extent.width * extent.height * extent.depth * image_info.layer_count * vk_format_to_size((VkFormat)image_data_info.format);
+	size_t image_data_size = image_info.extent.width * image_info.extent.height * image_info.extent.depth * image_info.array_layers * vk_format_to_size((VkFormat)image_data_info.format);
+	
 	VkImageLayout layout = image.current_layout;
-	VkImageUsageFlags image_usage = image_usage_to_vk_image_usage(image_info.usage);
-	uint32_t layer_count = image_info.layer_count;
+	VkOffset3D offset = Offset3D_to_VkOffset3D(image_offset);
+	VkExtent3D extent = Extent3D_to_VkExtent3D(image_extent);
+	VkImageSubresourceLayers dst_subresource_layers = ImageSubresourceLayers_to_VkImageSubresourceLayers(image_subresource);
+	VkImageSubresourceRange dst_subresource_range{
+		.aspectMask = dst_subresource_layers.aspectMask,
+		.baseMipLevel = dst_subresource_layers.mipLevel,
+		.levelCount = 1,
+		.baseArrayLayer = dst_subresource_layers.baseArrayLayer,
+		.layerCount = dst_subresource_layers.layerCount
+	};
 
-	vulkan_image_memory_barrier(image.image, image.full_aspect, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+	vulkan_image_memory_barrier(image.image, layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_subresource_range);
 	
 	auto [staging_buffer, staging_buffer_memory] = staging_buffer_create(image_data_info.data, image_data_size);
 
 	if (image_info.format == image_data_info.format) {
-		vulkan_copy_buffer_to_image(image.image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
+		vulkan_copy_buffer_to_image(staging_buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_subresource_layers, offset, extent);
 	} else {
-		VkImage staging_image = vulkan_image_create(image_info.view_type, (VkFormat)image_data_info.format, extent, layer_count, image.tiling, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+		VkImage staging_image = vulkan_image_create(image_info.view_type, (VkFormat)image_data_info.format, extent, 1, dst_subresource_layers.layerCount, image.tiling, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 		VkDeviceMemory staging_image_memory = vulkan_image_allocate(staging_image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-		vulkan_image_memory_barrier(staging_image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
-		vulkan_copy_buffer_to_image(staging_image, staging_buffer, extent, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layer_count);
-		vulkan_image_memory_barrier(staging_image, image.full_aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layer_count);
-		
-		VkOffset3D offset = { (int32_t)extent.width, (int32_t)extent.height, (int32_t)extent.depth };
+		VkImageSubresourceLayers staging_subresource_layers{
+			.aspectMask = dst_subresource_layers.aspectMask,
+			.mipLevel = 0,
+			.baseArrayLayer = 0,
+			.layerCount = dst_subresource_layers.layerCount
+		};
+		VkImageSubresourceRange staging_subresource_range{
+			.aspectMask = dst_subresource_layers.aspectMask,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = dst_subresource_layers.layerCount
+		};
 
-		VkImageBlit region;
-		region.srcSubresource = { .aspectMask = image.full_aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count };
-		region.srcOffsets[0] = { 0, 0, 0 };
-		region.srcOffsets[1] = offset;
-		region.dstSubresource = { .aspectMask = image.full_aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count };
-		region.dstOffsets[0] = { 0, 0, 0 };
-		region.dstOffsets[1] = offset;
+		vulkan_image_memory_barrier(staging_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, staging_subresource_range);
+		vulkan_copy_buffer_to_image(staging_buffer, staging_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, staging_subresource_layers, { 0, 0, 0 }, extent);
+		vulkan_image_memory_barrier(staging_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging_subresource_range);
+		
+		VkOffset3D iextent{ (int32_t)extent.width, (int32_t)extent.height, (int32_t)extent.depth };
+
+		VkImageBlit region{
+			.srcSubresource = staging_subresource_layers,
+			.srcOffsets = { { 0, 0, 0 }, iextent },
+			.dstSubresource = dst_subresource_layers,
+			.dstOffsets = { offset, iextent }
+		};
 
 		vkCmdBlitImage(m_frames[m_frame_index].draw_buffer, staging_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VkFilter::VK_FILTER_LINEAR);
 	
 		staging_image_destroy(staging_image, staging_image_memory);
 	}
 	
-	if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+	if (layout == VK_IMAGE_LAYOUT_UNDEFINED) {
 		layout = image_usage_to_optimal_image_layout(image.info.usage);
+		image.current_layout = layout;
+	}
 
-	vulkan_image_memory_barrier(image.image, image.full_aspect, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, layer_count);
-
+	vulkan_image_memory_barrier(image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layout, dst_subresource_range);
+	
 	staging_buffer_destroy(staging_buffer, staging_buffer_memory);
+}
+
+void VulkanGraphicsController::image_copy(ImageId src_image_id, ImageId dst_image_id, const ImageCopy& image_copy) {
+	Image& src_image = m_images.at(src_image_id);
+	Image& dst_image = m_images.at(dst_image_id);
+
+	VkImageSubresourceRange src_subresource_range{
+		.aspectMask = image_copy.src_subresource.aspect,
+		.baseMipLevel = image_copy.src_subresource.mip_level,
+		.levelCount = 1,
+		.baseArrayLayer = image_copy.src_subresource.base_array_layer,
+		.layerCount = image_copy.src_subresource.layer_count
+	};
+
+	VkImageSubresourceRange dst_subresource_range{
+		.aspectMask = image_copy.dst_subresource.aspect,
+		.baseMipLevel = image_copy.dst_subresource.mip_level,
+		.levelCount = 1,
+		.baseArrayLayer = image_copy.dst_subresource.base_array_layer,
+		.layerCount = image_copy.dst_subresource.layer_count
+	};
+
+	vulkan_image_memory_barrier(src_image.image, src_image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src_subresource_range);
+	vulkan_image_memory_barrier(dst_image.image, dst_image.current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_subresource_range);
+
+	vulkan_copy_image_to_image(
+		src_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ImageSubresourceLayers_to_VkImageSubresourceLayers(image_copy.src_subresource), Offset3D_to_VkOffset3D(image_copy.src_offset),
+		dst_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, ImageSubresourceLayers_to_VkImageSubresourceLayers(image_copy.dst_subresource), Offset3D_to_VkOffset3D(image_copy.dst_offset),
+		Extent3D_to_VkExtent3D(image_copy.extent)
+	);
+
+	if (dst_image.current_layout == VK_IMAGE_LAYOUT_UNDEFINED)
+		dst_image.current_layout = image_usage_to_optimal_image_layout(dst_image.info.usage);
+
+	vulkan_image_memory_barrier(src_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, src_image.current_layout, src_subresource_range);
+	vulkan_image_memory_barrier(dst_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dst_image.current_layout, dst_subresource_range);
+}
+
+void VulkanGraphicsController::image_blit() {
+
 }
 
 void VulkanGraphicsController::image_destroy(ImageId image_id) {
@@ -1284,22 +1390,23 @@ UniformSetId VulkanGraphicsController::uniform_set_create(ShaderId shader_id, ui
 			for (size_t j = 0; j < uniform.id_count; j += 2) {
 				Image& image = m_images.at(uniform.ids[j]);
 
-				if (image.info.usage & ImageUsageDepthStencilReadOnly)
-					image_should_have_layout(image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+				VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+				if (uniform.subresource_range.aspect == ImageAspectColor)
+					layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				else
-					image_should_have_layout(image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-				VkImageView view = image_view_create(image, uniform.image_usage);
+					layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+				
+				VkImageView view = vulkan_image_view_create(image.image, (VkImageViewType)image.info.view_type, (VkFormat)image.info.format, ImageSubresourceRange_to_VkImageSubresourceRange(uniform.subresource_range));
 				image_views.push_back(view);
 
 				VkDescriptorImageInfo image_info{
 					.sampler = m_samplers[uniform.ids[j + 1]].sampler,
 					.imageView = view,
-					.imageLayout = image.current_layout
+					.imageLayout = layout
 				};
 
 				image_infos.push_back(image_info);
-				images.push_back((uint32_t)j);
+				images.push_back(uniform.ids[j]);
 			}
 
 			write.descriptorCount = uniform.id_count / 2;
@@ -1550,14 +1657,14 @@ void VulkanGraphicsController::staging_buffer_destroy(VkBuffer buffer, VkDeviceM
 	});
 }
 
-VkImage VulkanGraphicsController::vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage) {
+VkImage VulkanGraphicsController::vulkan_image_create(ImageViewType view_type, VkFormat format, VkExtent3D extent, uint32_t mip_levels, uint32_t layer_count, VkImageTiling tiling, VkImageUsageFlags usage) {
 	VkImageCreateInfo image_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.flags = view_type == ImageViewType::Cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : (VkImageCreateFlags)0,
 		.imageType = view_type == ImageViewType::Cube ? VK_IMAGE_TYPE_2D : (VkImageType)view_type,
 		.format = format,
 		.extent = extent,
-		.mipLevels = 1,
+		.mipLevels = mip_levels,
 		.arrayLayers = layer_count,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
@@ -1592,36 +1699,13 @@ VkDeviceMemory VulkanGraphicsController::vulkan_image_allocate(VkImage image, Vk
 	return memory;
 }
 
-VkImageView VulkanGraphicsController::image_view_create(const Image& image, ImageUsageFlags image_usage) {
-	VkImageAspectFlags aspect = 0;
-
-	bool has_stencil = format_has_stencil((VkFormat)image.info.format);
-
-	if (image_usage & ImageUsageColorAttachment)
-		aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-	else if (image_usage & ImageUsageDepthStencilAttachment) {
-		aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-
-		if (has_stencil)
-			aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-	} else if (image_usage & ImageUsageDepthStencilReadOnly) {
-		if (image_usage & ImageUsageDepthSampled)
-			aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
-		//if (image_usage & ImageUsageStelcilSampled)
-		//	aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-	} else if (image_usage & ImageUsageColorSampled)
-		aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-	else if (image_usage & ImageUsageDepthSampled)
-		aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-	else if (image_usage & ImageUsageTransferSrc || image_usage & ImageUsageTransferDst)
-		aspect = image.full_aspect;
-
+VkImageView VulkanGraphicsController::vulkan_image_view_create(VkImage image, VkImageViewType view_type, VkFormat format, const VkImageSubresourceRange& subresource_range) {
 	VkImageViewCreateInfo view_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = image.image,
-		.viewType = (VkImageViewType)image.info.view_type,
-		.format = (VkFormat)image.info.format,
-		.subresourceRange = { aspect, 0, 1, 0, image.info.layer_count }
+		.image = image,
+		.viewType = view_type,
+		.format = format,
+		.subresourceRange = subresource_range
 	};
 	
 	VkImageView image_view;
@@ -1631,24 +1715,47 @@ VkImageView VulkanGraphicsController::image_view_create(const Image& image, Imag
 	return image_view;
 }
 
-void VulkanGraphicsController::vulkan_copy_buffer_to_image(VkImage image, VkBuffer buffer, VkExtent3D extent, VkImageAspectFlags aspect, VkImageLayout layout, uint32_t layer_count) {
+void VulkanGraphicsController::vulkan_copy_buffer_to_image(VkBuffer buffer, VkImage image, VkImageLayout layout, const VkImageSubresourceLayers& image_subresource, VkOffset3D offset, VkExtent3D extent) {
 	VkBufferImageCopy region{
 		.bufferOffset = 0,
-		.imageSubresource = { .aspectMask = aspect, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = layer_count },
+		.bufferRowLength = 0,
+		.bufferImageHeight = 0,
+		.imageSubresource = image_subresource,
+		.imageOffset = offset,
 		.imageExtent = extent
 	};
 
 	vkCmdCopyBufferToImage(m_frames[m_frame_index].draw_buffer, buffer, image, layout, 1, &region);
 }
 
+void VulkanGraphicsController::vulkan_copy_image_to_image(VkImage src_image, VkImageLayout src_image_layout, const VkImageSubresourceLayers& src_subres, const VkOffset3D& src_offset, VkImage dst_image, VkImageLayout dst_image_layout, const VkImageSubresourceLayers& dst_subres, const VkOffset3D& dst_offset, const VkExtent3D& extent) {
+	VkImageCopy region{
+		.srcSubresource = src_subres,
+		.srcOffset = src_offset,
+		.dstSubresource = dst_subres,
+		.dstOffset = dst_offset,
+		.extent = extent
+	};
+	
+	vkCmdCopyImage(m_frames[m_frame_index].draw_buffer, src_image, src_image_layout, dst_image, dst_image_layout, 1, &region);
+}
+
 void VulkanGraphicsController::image_should_have_layout(Image& image, VkImageLayout layout) {
 	if (image.current_layout != layout && layout != VK_IMAGE_LAYOUT_UNDEFINED) {
-		vulkan_image_memory_barrier(image.image, image.full_aspect, image.current_layout, layout, image.info.layer_count);
+		VkImageSubresourceRange subresource_range{
+			.aspectMask = image.full_aspect,
+			.baseMipLevel = 0,
+			.levelCount = image.info.mip_levels,
+			.baseArrayLayer = 0,
+			.layerCount = image.info.array_layers
+		};
+
+		vulkan_image_memory_barrier(image.image, image.current_layout, layout, subresource_range);
 		image.current_layout = layout;
 	}
 }
 
-void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t layer_count) {
+void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, const VkImageSubresourceRange& image_subresource) {
 	auto [src_stages, src_access] = image_layout_to_pipeline_stages_and_access(old_layout);
 	auto [dst_stages, dst_access] = image_layout_to_pipeline_stages_and_access(new_layout);
 
@@ -1661,7 +1768,7 @@ void VulkanGraphicsController::vulkan_image_memory_barrier(VkImage image, VkImag
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = image,
-		.subresourceRange = { aspect, 0, 1, 0, layer_count }
+		.subresourceRange = image_subresource
 	};
 
 	vkCmdPipelineBarrier(
