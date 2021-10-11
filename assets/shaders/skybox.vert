@@ -10,7 +10,7 @@ layout(set = 0, binding = 0) uniform UBO
 };
 
 void main() {
-	out_tex_coords = vec3(in_pos.x, in_pos.z, in_pos.y);
+	out_tex_coords = in_pos.xzy;
 
 	vec4 pos = proj_view * vec4(in_pos, 1.0f);
 	
